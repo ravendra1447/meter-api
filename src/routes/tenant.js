@@ -125,10 +125,13 @@ router.get('/dashboard', async (req, res) => {
     }
 
     const [pendingPaymentRows] = await pool.query(
-      `SELECT id FROM tenant_payments WHERE tenant_id = ? AND status = 'pending' LIMIT 1`,
+      `SELECT id, status FROM tenant_payments 
+       WHERE tenant_id = ? AND status IN ('pending', 'approved_pending_sync', 'cash_pending_sync') 
+       ORDER BY created_at DESC LIMIT 1`,
       [user.id]
     );
-    const hasPendingPayment = pendingPaymentRows.length > 0;
+    const hasPendingPayment = pendingPaymentRows.length > 0 && pendingPaymentRows[0].status === 'pending';
+    const pendingSyncPayment = pendingPaymentRows.length > 0 && pendingPaymentRows[0].status !== 'pending' ? pendingPaymentRows[0] : null;
 
     return ok(res, {
       user: { name: user.name, mobile: user.mobile },
@@ -166,7 +169,8 @@ router.get('/dashboard', async (req, res) => {
         deposit_paid: !!assignment.deposit_paid,
         deposit_amount: assignment.security_deposit_amount || property.security_deposit_amount || 0,
       },
-      has_pending_payment: hasPendingPayment
+      has_pending_payment: hasPendingPayment,
+      pending_sync_payment: pendingSyncPayment
     });
   } catch (err) {
     console.error(err);
@@ -641,6 +645,92 @@ router.get('/electricity-consumptions', async (req, res) => {
   } catch (err) {
     console.error(err);
     return fail(res, 'Failed to load electricity consumptions.', 500);
+  }
+});
+
+router.post('/payments/:id/sync-complete', async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const paymentId = req.params.id;
+    const tenantId = req.user.id;
+
+    const [payments] = await conn.query(
+      `SELECT * FROM tenant_payments WHERE id = ? AND tenant_id = ? AND status IN ('cash_pending_sync', 'approved_pending_sync') LIMIT 1`,
+      [paymentId, tenantId]
+    );
+
+    if (!payments.length) {
+      return fail(res, 'Pending sync payment not found.', 404);
+    }
+
+    const payment = payments[0];
+    const isCash = payment.status === 'cash_pending_sync';
+
+    await conn.beginTransaction();
+
+    // Mark success
+    await conn.query('UPDATE tenant_payments SET status = "success", updated_at = NOW() WHERE id = ?', [paymentId]);
+
+    // Update meter balance and relay action
+    const [assignments] = await conn.query(
+      `SELECT property_id FROM property_tenants WHERE tenant_id = ? AND status = 'active' LIMIT 1`,
+      [tenantId]
+    );
+
+    if (assignments.length) {
+      const propertyId = assignments[0].property_id;
+      const [meterRows] = await conn.query(
+        `SELECT * FROM electricity_meters WHERE property_id = ? AND status = 'active' AND meter_type = 'prepaid' LIMIT 1`,
+        [propertyId]
+      );
+
+      if (meterRows.length) {
+        const meter = meterRows[0];
+        
+        // If it was cash, we update the balance NOW. (UPI balance was updated at approval)
+        if (isCash) {
+          const newBalance = Number(meter.current_balance) + Number(payment.amount);
+          await conn.query(
+            'UPDATE electricity_meters SET current_balance = ?, updated_at = NOW() WHERE id = ?',
+            [newBalance, meter.id]
+          );
+
+          // Deduct unbilled charges for cash
+          let remaining = Number(payment.amount);
+          const [charges] = await conn.query(
+            `SELECT * FROM tenant_unbilled_charges WHERE tenant_id = ? AND status = 'active' ORDER BY id ASC`,
+            [tenantId]
+          );
+
+          for (const charge of charges) {
+            if (remaining <= 0) break;
+            const chargeAmount = Number(charge.amount);
+            if (remaining >= chargeAmount) {
+              await conn.query("UPDATE tenant_unbilled_charges SET status = 'used', updated_at = NOW() WHERE id = ?", [charge.id]);
+              if (charge.description === 'Security Deposit (Advance)') {
+                await conn.query("UPDATE property_tenants SET deposit_paid = TRUE, updated_at = NOW() WHERE tenant_id = ? AND status = 'active'", [tenantId]);
+              }
+              remaining -= chargeAmount;
+            }
+          }
+        }
+
+        // Always trigger Relay ON
+        const [smartRows] = await conn.query('SELECT id FROM meters WHERE meter_number = ? LIMIT 1', [meter.meter_number]);
+        if (smartRows.length) {
+          await conn.query('UPDATE meters SET pending_relay_action = ?, updated_at = NOW() WHERE id = ?', ['ON', smartRows[0].id]);
+        }
+      }
+    }
+
+    await conn.commit();
+    return ok(res, { success: true }, 'Sync complete and meter activated.');
+  } catch (err) {
+    await conn.rollback();
+    console.error(err);
+    return fail(res, 'Failed to complete sync.', 500);
+  } finally {
+    conn.release();
   }
 });
 

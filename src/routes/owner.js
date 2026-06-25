@@ -2438,9 +2438,9 @@ router.post('/approve-payment/:id', async (req, res) => {
 
     await conn.beginTransaction();
 
-    await conn.query('UPDATE tenant_payments SET status = "success", updated_at = NOW() WHERE id = ?', [paymentId]);
+    await conn.query('UPDATE tenant_payments SET status = "approved_pending_sync", updated_at = NOW() WHERE id = ?', [paymentId]);
 
-    // Update meter balance and trigger Relay ON
+    // Update meter balance but DO NOT trigger Relay ON yet (Wait for Bluetooth Sync)
     const [meterRows] = await conn.query(
       `SELECT * FROM electricity_meters
        WHERE property_id = ? AND status = 'active' AND meter_type = 'prepaid'
@@ -2455,11 +2455,7 @@ router.post('/approve-payment/:id', async (req, res) => {
         'UPDATE electricity_meters SET current_balance = ?, updated_at = NOW() WHERE id = ?',
         [newBalance, meter.id]
       );
-
-      const [smartRows] = await conn.query('SELECT id FROM meters WHERE meter_number = ? LIMIT 1', [meter.meter_number]);
-      if (smartRows.length) {
-        await conn.query('UPDATE meters SET pending_relay_action = ?, updated_at = NOW() WHERE id = ?', ['ON', smartRows[0].id]);
-      }
+      // NOTE: We do NOT set pending_relay_action = 'ON' here anymore. The tenant must sync.
     }
 
     // Deduct unbilled charges
@@ -2490,7 +2486,7 @@ router.post('/approve-payment/:id', async (req, res) => {
     }
 
     await conn.commit();
-    return ok(res, { success: true }, 'Payment approved and meter activated.');
+    return ok(res, { success: true }, 'Payment approved. Tenant needs to sync via Bluetooth.');
   } catch (err) {
     await conn.rollback();
     console.error(err);
@@ -2523,6 +2519,43 @@ router.post('/reject-payment/:id', async (req, res) => {
   } catch (err) {
     console.error(err);
     return fail(res, 'Failed to reject payment.', 500);
+  }
+});
+
+router.post('/tenants/:id/cash-recharge', async (req, res) => {
+  try {
+    const tenantId = req.params.id;
+    const ownerId = req.user.id;
+    const { amount } = req.body;
+
+    if (!amount || amount <= 0) {
+      return fail(res, 'Invalid amount.', 422);
+    }
+
+    // Verify tenant belongs to owner
+    const [assignments] = await pool.query(
+      `SELECT pt.property_id FROM property_tenants pt
+       INNER JOIN properties p ON p.id = pt.property_id
+       WHERE pt.tenant_id = ? AND p.owner_id = ? AND pt.status = 'active' LIMIT 1`,
+      [tenantId, ownerId]
+    );
+
+    if (!assignments.length) {
+      return fail(res, 'Tenant assignment not found.', 404);
+    }
+
+    const receiptNo = 'CASH-' + Date.now() + Math.floor(Math.random() * 1000);
+
+    await pool.query(
+      `INSERT INTO tenant_payments (tenant_id, amount, method, receipt_no, status, created_at, updated_at)
+       VALUES (?, ?, 'cash', ?, 'cash_pending_sync', NOW(), NOW())`,
+      [tenantId, amount, receiptNo]
+    );
+
+    return ok(res, { success: true }, 'Cash recharge initiated. Tenant needs to accept and sync.');
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to initiate cash recharge.', 500);
   }
 });
 
