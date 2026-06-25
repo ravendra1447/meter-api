@@ -3,24 +3,39 @@ const pool = require('../config/database');
 /**
  * Deduct prepaid balance for units consumed (kWh × tariff).
  */
-async function deductBalanceForConsumption(electricityMeter, unitsConsumed) {
-  if (unitsConsumed <= 0) {
+async function deductBalanceForConsumption(electricityMeter, unitsConsumed, totalReading) {
+  if (unitsConsumed <= 0 && (!totalReading || totalReading <= Number(electricityMeter.last_reading))) {
     return electricityMeter;
   }
 
-  const tariff = Number(electricityMeter.tariff_per_unit);
-  const charge = Math.round(unitsConsumed * tariff * 100) / 100;
-  const newBalance = Math.max(
-    0,
-    Math.round((Number(electricityMeter.current_balance) - charge) * 100) / 100
-  );
+  const newReading = totalReading && totalReading > Number(electricityMeter.last_reading) 
+    ? totalReading 
+    : electricityMeter.last_reading;
 
-  await pool.query(
-    `UPDATE electricity_meters
-     SET current_balance = ?, last_reading = ?, updated_at = NOW()
-     WHERE id = ?`,
-    [newBalance, electricityMeter.last_reading, electricityMeter.id]
-  );
+  if (electricityMeter.meter_type === 'postpaid') {
+    // For postpaid, we do not deduct balance, just update reading
+    await pool.query(
+      `UPDATE electricity_meters
+       SET last_reading = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [newReading, electricityMeter.id]
+    );
+  } else {
+    // Prepaid: Deduct balance
+    const tariff = Number(electricityMeter.tariff_per_unit);
+    const charge = Math.round(unitsConsumed * tariff * 100) / 100;
+    const newBalance = Math.max(
+      0,
+      Math.round((Number(electricityMeter.current_balance) - charge) * 100) / 100
+    );
+
+    await pool.query(
+      `UPDATE electricity_meters
+       SET current_balance = ?, last_reading = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [newBalance, newReading, electricityMeter.id]
+    );
+  }
 
   const [rows] = await pool.query('SELECT * FROM electricity_meters WHERE id = ? LIMIT 1', [
     electricityMeter.id,

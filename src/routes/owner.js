@@ -1135,6 +1135,56 @@ router.post('/properties/:property/meters', async (req, res) => {
   }
 });
 
+router.post('/meters/:meter/generate-postpaid-bill', async (req, res) => {
+  try {
+    const meterId = parseInt(req.params.meter, 10);
+    const meter = await loadOwnerMeter(meterId, req.user.id);
+    if (!meter) return fail(res, 'Meter not found.', 404);
+    if (meter.forbidden) return fail(res, 'Access denied.', 403);
+    
+    if (meter.meter_type !== 'postpaid') {
+      return fail(res, 'This API is only for postpaid meters.', 400);
+    }
+
+    const [tenantRows] = await pool.query(
+      `SELECT tenant_id FROM property_tenants WHERE property_id = ? AND status = 'active' LIMIT 1`,
+      [meter.property_id]
+    );
+    if (!tenantRows.length) {
+      return fail(res, 'No active tenant found for this property.', 400);
+    }
+    const tenantId = tenantRows[0].tenant_id;
+
+    const currentReading = Number(meter.last_reading) || 0;
+    const previousReading = Number(meter.last_billed_reading) || 0;
+    const unitsConsumed = Math.max(0, currentReading - previousReading);
+    
+    if (unitsConsumed <= 0) {
+      return fail(res, 'No new units consumed since last bill.', 400);
+    }
+
+    const tariff = Number(meter.tariff_per_unit) || 8;
+    const billAmount = Math.round(unitsConsumed * tariff * 100) / 100;
+
+    await pool.query(
+      `INSERT INTO tenant_unbilled_charges 
+       (tenant_id, property_id, charge_type, amount, charge_date, status, created_at, updated_at)
+       VALUES (?, ?, 'electricity_charges', ?, NOW(), 'active', NOW(), NOW())`,
+      [tenantId, meter.property_id, billAmount]
+    );
+
+    await pool.query(
+      `UPDATE electricity_meters SET last_billed_reading = ? WHERE id = ?`,
+      [currentReading, meter.id]
+    );
+
+    return ok(res, { unitsConsumed, billAmount }, 'Postpaid bill generated successfully.');
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to generate postpaid bill.', 500);
+  }
+});
+
 router.get('/meters/:meter', async (req, res) => {
   try {
     const meter = await loadOwnerMeter(req.params.meter, req.user.id);

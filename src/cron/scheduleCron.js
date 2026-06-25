@@ -94,7 +94,7 @@ async function processDailySchedules() {
       if (targetAction) {
         const [meterRows] = await pool.query(
           'SELECT id, pending_relay_action FROM electricity_meters WHERE id = ?',
-          [schedule.meter_id]
+          [schedule.electricity_meter_id]
         );
         
         if (meterRows.length > 0) {

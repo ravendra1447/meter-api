@@ -103,7 +103,8 @@ async function saveReading(
       if (electricityMeter) {
         const updatedElectricityMeter = await prepaidRelayService.deductBalanceForConsumption(
           electricityMeter,
-          dailyConsumption
+          dailyConsumption,
+          totalReading
         );
         currentBalance = Number(updatedElectricityMeter.current_balance);
 
