@@ -96,6 +96,7 @@ router.get('/dashboard', async (req, res) => {
       tariff,
       month_usage_kwh: monthUsage,
       month_usage_percent: usagePercent,
+      current_reading: latestConsumption ? Number(latestConsumption.current_reading) : (meter ? Number(meter.current_reading ?? 0) : 0),
       relay_status: relayStatus,
       pre_trip_alarm: balance > 0 && balance < 100,
       meter,
@@ -111,6 +112,11 @@ router.get('/dashboard', async (req, res) => {
             grace_days: graceDays,
           }
         : null,
+      agreement: {
+        duration_months: assignment.agreement_duration_months || 11,
+        move_in_date: assignment.move_in_date,
+        deposit_paid: !!assignment.deposit_paid,
+      }
     });
   } catch (err) {
     console.error(err);
@@ -298,6 +304,14 @@ router.post('/payments', async (req, res) => {
           "UPDATE tenant_unbilled_charges SET status = 'used', updated_at = NOW() WHERE id = ?",
           [charge.id]
         );
+        
+        if (charge.description === 'Security Deposit (Advance)') {
+          await conn.query(
+            "UPDATE property_tenants SET deposit_paid = TRUE, updated_at = NOW() WHERE tenant_id = ? AND status = 'active'",
+            [user.id]
+          );
+        }
+        
         remaining -= chargeAmount;
       }
     }

@@ -254,8 +254,8 @@ router.post('/tenants', async (req, res) => {
       move_in_date,
     } = req.body;
 
-    if (!name || !mobile || !password || !property_id) {
-      return fail(res, 'Name, mobile, password, and property_id are required.', 422);
+    if (!name || !mobile || !password || !property_code) {
+      return fail(res, 'Name, mobile, password, and property_code are required.', 422);
     }
     if (!mobileRegex(mobile)) {
       return fail(res, 'Invalid mobile number format.', 422);
@@ -264,10 +264,16 @@ router.post('/tenants', async (req, res) => {
       return fail(res, 'Password must be at least 6 characters.', 422);
     }
 
-    const property = await loadOwnerProperty(property_id, req.user.id);
-    if (!property) {
-      return fail(res, 'Property not found.', 404);
+    const [propRows] = await conn.query(
+      'SELECT id, security_deposit_amount FROM properties WHERE property_code = ? AND owner_id = ? LIMIT 1',
+      [property_code, req.user.id]
+    );
+
+    if (!propRows.length) {
+      return fail(res, 'Invalid property code.', 404);
     }
+
+    const property = propRows[0];
 
     const [existingMobile] = await conn.query(
       'SELECT id FROM users WHERE mobile = ? LIMIT 1',
@@ -299,10 +305,19 @@ router.post('/tenants', async (req, res) => {
     );
 
     const [assignmentResult] = await conn.query(
-      `INSERT INTO property_tenants (property_id, tenant_id, move_in_date, status, created_at, updated_at)
-       VALUES (?, ?, ?, 'active', NOW(), NOW())`,
-      [property.id, userResult.insertId, moveIn]
+      `INSERT INTO property_tenants (property_id, tenant_id, move_in_date, agreement_duration_months, deposit_paid, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, FALSE, 'active', NOW(), NOW())`,
+      [property.id, userResult.insertId, moveIn, agreement_duration_months]
     );
+
+    // Create a one-time charge for Security Deposit if it exists
+    if (property.security_deposit_amount && Number(property.security_deposit_amount) > 0) {
+      await conn.query(
+        `INSERT INTO tenant_unbilled_charges (tenant_id, amount, description, status, created_at, updated_at)
+         VALUES (?, ?, ?, 'active', NOW(), NOW())`,
+        [userResult.insertId, Number(property.security_deposit_amount), 'Security Deposit (Advance)']
+      );
+    }
 
     await conn.commit();
 

@@ -165,7 +165,24 @@ async function buildStatement(assignment, conn = pool) {
   const tenant = assignment.tenant;
   const tenantId = tenant.id;
 
-  let rent = Number(assignment.monthly_rent ?? property.monthly_rent ?? 0);
+  let baseRent = Number(assignment.monthly_rent ?? property.monthly_rent ?? 0);
+  
+  // Calculate 10% increase per agreement term
+  let rent = baseRent;
+  const moveInDate = new Date(assignment.move_in_date);
+  if (moveInDate && !isNaN(moveInDate.getTime()) && assignment.agreement_duration_months) {
+    const durationMonths = Number(assignment.agreement_duration_months) || 11;
+    if (durationMonths > 0) {
+      const currentDate = now();
+      const diffTime = Math.abs(currentDate - moveInDate);
+      const diffMonths = Math.floor(diffTime / (1000 * 60 * 60 * 24 * 30.44)); 
+      
+      const renewals = Math.floor(diffMonths / durationMonths);
+      for (let i = 0; i < renewals; i++) {
+        rent += rent * 0.10; // 10% increase compounded per renewal
+      }
+    }
+  }
   let maintenance = Number(assignment.maintenance_charges ?? property.maintenance_charges ?? 0);
 
   if (maintenance <= 0) {
