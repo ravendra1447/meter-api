@@ -129,6 +129,13 @@ router.get('/dashboard', async (req, res) => {
                 off_time: billingObj.relay_off_time || billingObj.daily_off_time || null,
                 on_time: billingObj.relay_on_time || billingObj.daily_on_time || null,
               };
+            } else if (billingObj.daily_off_time || billingObj.daily_on_time) {
+              relaySchedule = {
+                type: 'daily',
+                day: 1,
+                off_time: billingObj.daily_off_time || null,
+                on_time: billingObj.daily_on_time || null,
+              };
             }
           }
         } catch(e) {}

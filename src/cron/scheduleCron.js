@@ -116,28 +116,11 @@ async function processDailySchedules() {
 
 // Run every minute to check schedule thresholds
 function startScheduleCron() {
-  let isTestingOn = false;
-
-  cron.schedule('*/2 * * * *', async () => {
-    console.log('[Test] Toggling Relay Status every 2 minutes...');
-    isTestingOn = !isTestingOn;
-    const action = isTestingOn ? 'ON' : 'OFF';
-
-    try {
-      // Toggle for ALL electricity meters
-      await pool.query('UPDATE electricity_meters SET pending_relay_action = ?', [action]);
-      // Also toggle in legacy meters table so Dashboard reflects it
-      await pool.query('UPDATE meters SET relay_status = ?', [action]);
-      console.log(`[Test] All meters set to \${action}`);
-    } catch (e) {
-      console.error(e);
-    }
-    
-    // Uncomment to run actual schedule logic
-    // processDailySchedules();
+  cron.schedule('* * * * *', async () => {
+    await processDailySchedules();
   });
   
-  console.log('Daily Relay Schedule Cron Job started (node-cron TEST MODE: Toggling every 2 min).');
+  console.log('Daily Relay Schedule Cron Job started.');
 }
 
 module.exports = { startScheduleCron };
