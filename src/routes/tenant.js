@@ -107,6 +107,7 @@ router.get('/dashboard', async (req, res) => {
     }
 
     let graceDays = 5;
+    let relaySchedule = null;
     if (meter) {
       const [scheduleRows] = await pool.query(
         `SELECT billing FROM meter_billing_schedules WHERE electricity_meter_id = ? AND status = 'active' LIMIT 1`,
@@ -117,8 +118,18 @@ router.get('/dashboard', async (req, res) => {
           const billingObj = typeof scheduleRows[0].billing === 'string' 
             ? JSON.parse(scheduleRows[0].billing) 
             : scheduleRows[0].billing;
-          if (billingObj && billingObj.grace_days !== undefined) {
-            graceDays = Number(billingObj.grace_days);
+          if (billingObj) {
+            if (billingObj.grace_days !== undefined) {
+              graceDays = Number(billingObj.grace_days);
+            }
+            if (billingObj.relay_schedule_type && billingObj.relay_schedule_type !== 'none') {
+              relaySchedule = {
+                type: billingObj.relay_schedule_type,
+                day: billingObj.relay_schedule_day || 1,
+                off_time: billingObj.relay_off_time || billingObj.daily_off_time || null,
+                on_time: billingObj.relay_on_time || billingObj.daily_on_time || null,
+              };
+            }
           }
         } catch(e) {}
       }
@@ -149,6 +160,7 @@ router.get('/dashboard', async (req, res) => {
       month_usage_percent: usagePercent,
       current_reading: currentReading,
       relay_status: relayStatus,
+      relay_schedule: relaySchedule,
       pre_trip_alarm: balance > 0 && balance < 100,
       meter,
       smart_meter_id: smartMeterId,
