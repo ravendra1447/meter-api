@@ -1,4 +1,4 @@
-const axios = require('axios'); // Requires axios if they want to call a 3rd party API later
+// No external dependencies for now
 
 /**
  * A service to handle sending SMS / WhatsApp notifications to tenants.
