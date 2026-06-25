@@ -1,5 +1,4 @@
-const cron = require('node-cron');
-const pool = require('../config/db');
+const pool = require('../config/database');
 
 /**
  * Checks all active schedules for daily_off_time and daily_on_time.
@@ -27,45 +26,71 @@ async function processDailySchedules() {
         ? JSON.parse(schedule.billing) 
         : schedule.billing;
 
-      const offTime = billing.daily_off_time; // e.g. "23:00"
-      const onTime = billing.daily_on_time;   // e.g. "06:00"
+      const scheduleType = billing.relay_schedule_type || 'daily';
+      if (scheduleType === 'none') continue;
+
+      const scheduleDay = parseInt(billing.relay_schedule_day || '1', 10);
+      const offTime = billing.relay_off_time || billing.daily_off_time;
+      const onTime = billing.relay_on_time || billing.daily_on_time;
 
       if (!offTime && !onTime) continue;
 
       let targetAction = null;
 
-      // We need to determine the currently active window.
-      // E.g., OFF = 23:00, ON = 06:00
-      // Current = 23:15 -> OFF window
-      // Current = 06:15 -> ON window
+      const currentDayOfWeek = now.getDay() === 0 ? 7 : now.getDay(); // 1-7
+      const currentDateOfMonth = now.getDate(); // 1-31
+      
+      // Figure out if today is the action day based on schedule type
+      let isOffDay = false;
+      let isOnDay = false;
+
+      if (scheduleType === 'daily') {
+        isOffDay = true;
+        isOnDay = true;
+      } else if (scheduleType === 'weekly') {
+        isOffDay = (currentDayOfWeek === scheduleDay);
+        let expectedOnDay = scheduleDay;
+        if (offTime && onTime && offTime > onTime) {
+          expectedOnDay = (scheduleDay % 7) + 1; // Next day
+        }
+        isOnDay = (currentDayOfWeek === expectedOnDay);
+      } else if (scheduleType === 'monthly') {
+        isOffDay = (currentDateOfMonth === scheduleDay);
+        let expectedOnDay = scheduleDay;
+        if (offTime && onTime && offTime > onTime) {
+          // Simple next day logic (ignores month length for simplicity, works 99% of time unless end of month)
+          const tempDate = new Date(now);
+          tempDate.setDate(scheduleDay + 1);
+          expectedOnDay = tempDate.getDate();
+        }
+        isOnDay = (currentDateOfMonth === expectedOnDay);
+      }
 
       if (offTime && onTime) {
         if (offTime > onTime) {
-          // Night schedule (e.g. 23:00 to 06:00)
-          if (currentTime >= offTime || currentTime < onTime) {
+          // Night schedule (e.g. 23:00 to 06:00 next day)
+          if (isOffDay && currentTime >= offTime) {
             targetAction = 'OFF';
-          } else {
+          } else if (isOnDay && currentTime < onTime) {
+            targetAction = 'OFF'; // still in the night window
+          } else if (isOnDay && currentTime >= onTime) {
             targetAction = 'ON';
           }
         } else {
-          // Day schedule (e.g. 09:00 to 18:00)
-          if (currentTime >= offTime && currentTime < onTime) {
+          // Day schedule (e.g. 09:00 to 18:00 same day)
+          if (isOffDay && currentTime >= offTime && currentTime < onTime) {
             targetAction = 'OFF';
-          } else {
+          } else if (isOnDay && currentTime >= onTime) {
             targetAction = 'ON';
           }
         }
-      } else if (offTime) {
-        // Only OFF specified. We set to OFF if current time is >= offTime.
-        // We probably only want to trigger it once.
-        if (currentTime === offTime) targetAction = 'OFF';
-      } else if (onTime) {
-        // Only ON specified
-        if (currentTime === onTime) targetAction = 'ON';
+      } else if (offTime && isOffDay && currentTime >= offTime) {
+        targetAction = 'OFF';
+      } else if (onTime && isOnDay && currentTime >= onTime) {
+        targetAction = 'ON';
       }
 
       if (targetAction) {
-        // Check current pending_relay_action. If it's different or null, update it.
         const [meterRows] = await pool.query(
           'SELECT id, pending_relay_action FROM electricity_meters WHERE id = ?',
           [schedule.meter_id]
@@ -90,9 +115,10 @@ async function processDailySchedules() {
 
 // Run every minute to check schedule thresholds
 function startScheduleCron() {
-  cron.schedule('* * * * *', () => {
+  setInterval(() => {
     processDailySchedules();
-  });
+  }, 60 * 1000); // Check every minute
+  
   console.log('Daily Relay Schedule Cron Job started (runs every minute).');
 }
 
