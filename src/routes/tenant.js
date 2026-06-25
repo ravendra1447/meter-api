@@ -47,12 +47,9 @@ router.get('/dashboard', async (req, res) => {
     );
     const latestConsumption = consumptionRows[0] ?? null;
 
-    const monthUsage = latestConsumption ? Number(latestConsumption.total_consumed_units) : 0;
-    const monthLimit = Math.max(monthUsage, 70);
-    const usagePercent = Math.min(100, Math.round((monthUsage / monthLimit) * 100));
-
     let relayStatus = balance > 50 ? 'ON' : 'OFF';
     let smartMeterId = null;
+    let smartMeter = null;
 
     if (meter) {
       const [smartRows] = await pool.query(
@@ -60,9 +57,53 @@ router.get('/dashboard', async (req, res) => {
         [meter.meter_number]
       );
       if (smartRows.length) {
-        relayStatus = smartRows[0].relay_status;
-        smartMeterId = smartRows[0].id;
+        smartMeter = smartRows[0];
+        relayStatus = smartMeter.relay_status;
+        smartMeterId = smartMeter.id;
       }
+    } else {
+      const [firstSmart] = await pool.query('SELECT * FROM meters LIMIT 1');
+      smartMeter = firstSmart[0] ?? null;
+    }
+
+    let daily = [];
+    if (smartMeter) {
+      const [readings] = await pool.query(
+        `SELECT * FROM meter_readings
+         WHERE meter_id = ?
+         ORDER BY reading_date DESC, id DESC
+         LIMIT 30`,
+        [smartMeter.id]
+      );
+
+      daily = readings.map((r) => ({
+        kwh: Number(r.daily_consumption),
+        cost: Math.round(Number(r.daily_consumption) * tariff * 100) / 100,
+      }));
+    }
+
+    let totalUsageKwh = daily.reduce((sum, d) => sum + d.kwh, 0);
+    let totalUsageCost = daily.reduce((sum, d) => sum + d.cost, 0);
+
+    if (totalUsageKwh === 0 && latestConsumption) {
+      totalUsageKwh = Number(latestConsumption.total_consumed_units);
+      totalUsageCost = Math.round(totalUsageKwh * tariff * 100) / 100;
+    }
+
+    const monthLimit = Math.max(totalUsageKwh, 70);
+    const usagePercent = Math.min(100, Math.round((totalUsageKwh / monthLimit) * 100));
+    
+    // Fetch latest reading correctly
+    let currentReading = 0;
+    if (smartMeter) {
+        const [lastR] = await pool.query(
+            'SELECT total_reading FROM meter_readings WHERE meter_id = ? ORDER BY reading_date DESC, id DESC LIMIT 1',
+            [smartMeter.id]
+        );
+        if (lastR.length) currentReading = Number(lastR[0].total_reading);
+    }
+    if (currentReading === 0) {
+        currentReading = latestConsumption ? Number(latestConsumption.current_reading) : (meter ? Number(meter.current_reading ?? 0) : 0);
     }
 
     let graceDays = 5;
@@ -94,9 +135,10 @@ router.get('/dashboard', async (req, res) => {
       balance,
       units_remaining: unitsRemaining,
       tariff,
-      month_usage_kwh: monthUsage,
+      month_usage_kwh: totalUsageKwh,
+      month_usage_cost: totalUsageCost,
       month_usage_percent: usagePercent,
-      current_reading: latestConsumption ? Number(latestConsumption.current_reading) : (meter ? Number(meter.current_reading ?? 0) : 0),
+      current_reading: currentReading,
       relay_status: relayStatus,
       pre_trip_alarm: balance > 0 && balance < 100,
       meter,
