@@ -105,6 +105,11 @@ async function processDailySchedules() {
               'UPDATE electricity_meters SET pending_relay_action = ? WHERE id = ?',
               [targetAction, meter.id]
             );
+            // Also update legacy meters table so tenant dashboard reflects the change instantly
+            await pool.query(
+              'UPDATE meters SET relay_status = ? WHERE meter_number = (SELECT meter_number FROM electricity_meters WHERE id = ?)',
+              [targetAction, meter.id]
+            );
           }
         }
       }
