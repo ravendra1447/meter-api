@@ -65,6 +65,24 @@ router.get('/dashboard', async (req, res) => {
       }
     }
 
+    let graceDays = 5;
+    if (meter) {
+      const [scheduleRows] = await pool.query(
+        `SELECT billing FROM meter_billing_schedules WHERE electricity_meter_id = ? AND status = 'active' LIMIT 1`,
+        [meter.id]
+      );
+      if (scheduleRows.length && scheduleRows[0].billing) {
+        try {
+          const billingObj = typeof scheduleRows[0].billing === 'string' 
+            ? JSON.parse(scheduleRows[0].billing) 
+            : scheduleRows[0].billing;
+          if (billingObj && billingObj.grace_days !== undefined) {
+            graceDays = Number(billingObj.grace_days);
+          }
+        } catch(e) {}
+      }
+    }
+
     return ok(res, {
       user: { name: user.name, mobile: user.mobile },
       property: {
@@ -90,6 +108,7 @@ router.get('/dashboard', async (req, res) => {
             status_label: statement.status_label,
             invoice_no: statement.invoice_no,
             period: statement.period,
+            grace_days: graceDays,
           }
         : null,
     });
@@ -242,6 +261,7 @@ router.post('/payments', async (req, res) => {
       [user.id, payAmount, payMethod, receiptNo]
     );
 
+    // Update meter balance and trigger Relay ON
     const [meterRows] = await conn.query(
       `SELECT * FROM electricity_meters
        WHERE property_id = ? AND status = 'active' AND meter_type = 'prepaid'
@@ -256,13 +276,17 @@ router.post('/payments', async (req, res) => {
         'UPDATE electricity_meters SET current_balance = ?, updated_at = NOW() WHERE id = ?',
         [newBalance, meter.id]
       );
+
+      const [smartRows] = await conn.query('SELECT id FROM meters WHERE meter_number = ? LIMIT 1', [meter.meter_number]);
+      if (smartRows.length) {
+        await conn.query('UPDATE meters SET pending_relay_action = ?, updated_at = NOW() WHERE id = ?', ['ON', smartRows[0].id]);
+      }
     }
 
+    // Deduct unbilled charges
     let remaining = payAmount;
     const [charges] = await conn.query(
-      `SELECT * FROM tenant_unbilled_charges
-       WHERE tenant_id = ? AND status = 'active'
-       ORDER BY id ASC`,
+      `SELECT * FROM tenant_unbilled_charges WHERE tenant_id = ? AND status = 'active' ORDER BY id ASC`,
       [user.id]
     );
 
@@ -286,7 +310,7 @@ router.post('/payments', async (req, res) => {
       method: payMethod,
       paid_at: now.toISOString(),
       status: 'success',
-    }, 'Payment successful.');
+    }, 'Payment successful. Meter reconnected.');
   } catch (err) {
     await conn.rollback();
     console.error(err);

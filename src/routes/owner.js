@@ -795,7 +795,6 @@ router.post('/properties', async (req, res) => {
       security_deposit_amount,
       status,
     } = req.body;
-
     if (!name || !address) {
       return fail(res, 'Name and address are required.', 422);
     }
@@ -2377,5 +2376,4 @@ router.delete('/other-active-charges/:otherActiveCharge', async (req, res) => {
     return fail(res, 'Failed to delete other active charge.', 500);
   }
 });
-
 module.exports = router;
