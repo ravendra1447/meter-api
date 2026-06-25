@@ -103,7 +103,7 @@ router.get('/dashboard', async (req, res) => {
         if (lastR.length) currentReading = Number(lastR[0].total_reading);
     }
     if (currentReading === 0) {
-        currentReading = latestConsumption ? Number(latestConsumption.current_reading) : (meter ? Number(meter.current_reading ?? 0) : 0);
+        currentReading = latestConsumption ? Number(latestConsumption.current_reading) : (meter ? Number(meter.last_reading ?? 0) : 0);
     }
 
     let graceDays = 5;

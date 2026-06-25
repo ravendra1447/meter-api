@@ -194,6 +194,7 @@ async function dashboard(meterId) {
     tariff,
     bill_amount: round2(monthlyUsage * tariff),
     relay_status: meter.relay_status,
+    pending_relay_action: meter.pending_relay_action,
     status: meter.status,
   };
 }
