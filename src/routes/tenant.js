@@ -124,6 +124,12 @@ router.get('/dashboard', async (req, res) => {
       }
     }
 
+    const [pendingPaymentRows] = await pool.query(
+      `SELECT id FROM tenant_payments WHERE tenant_id = ? AND status = 'pending' LIMIT 1`,
+      [user.id]
+    );
+    const hasPendingPayment = pendingPaymentRows.length > 0;
+
     return ok(res, {
       user: { name: user.name, mobile: user.mobile },
       property: {
@@ -158,7 +164,9 @@ router.get('/dashboard', async (req, res) => {
         duration_months: assignment.agreement_duration_months || 11,
         move_in_date: assignment.move_in_date,
         deposit_paid: !!assignment.deposit_paid,
-      }
+        deposit_amount: assignment.security_deposit_amount || property.security_deposit_amount || 0,
+      },
+      has_pending_payment: hasPendingPayment
     });
   } catch (err) {
     console.error(err);
@@ -305,58 +313,9 @@ router.post('/payments', async (req, res) => {
 
     await conn.query(
       `INSERT INTO tenant_payments (tenant_id, amount, method, receipt_no, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'success', NOW(), NOW())`,
+       VALUES (?, ?, ?, ?, 'pending', NOW(), NOW())`,
       [user.id, payAmount, payMethod, receiptNo]
     );
-
-    // Update meter balance and trigger Relay ON
-    const [meterRows] = await conn.query(
-      `SELECT * FROM electricity_meters
-       WHERE property_id = ? AND status = 'active' AND meter_type = 'prepaid'
-       LIMIT 1`,
-      [assignment.property_id]
-    );
-
-    if (meterRows.length) {
-      const meter = meterRows[0];
-      const newBalance = Number(meter.current_balance) + payAmount;
-      await conn.query(
-        'UPDATE electricity_meters SET current_balance = ?, updated_at = NOW() WHERE id = ?',
-        [newBalance, meter.id]
-      );
-
-      const [smartRows] = await conn.query('SELECT id FROM meters WHERE meter_number = ? LIMIT 1', [meter.meter_number]);
-      if (smartRows.length) {
-        await conn.query('UPDATE meters SET pending_relay_action = ?, updated_at = NOW() WHERE id = ?', ['ON', smartRows[0].id]);
-      }
-    }
-
-    // Deduct unbilled charges
-    let remaining = payAmount;
-    const [charges] = await conn.query(
-      `SELECT * FROM tenant_unbilled_charges WHERE tenant_id = ? AND status = 'active' ORDER BY id ASC`,
-      [user.id]
-    );
-
-    for (const charge of charges) {
-      if (remaining <= 0) break;
-      const chargeAmount = Number(charge.amount);
-      if (remaining >= chargeAmount) {
-        await conn.query(
-          "UPDATE tenant_unbilled_charges SET status = 'used', updated_at = NOW() WHERE id = ?",
-          [charge.id]
-        );
-        
-        if (charge.description === 'Security Deposit (Advance)') {
-          await conn.query(
-            "UPDATE property_tenants SET deposit_paid = TRUE, updated_at = NOW() WHERE tenant_id = ? AND status = 'active'",
-            [user.id]
-          );
-        }
-        
-        remaining -= chargeAmount;
-      }
-    }
 
     await conn.commit();
 
@@ -365,8 +324,8 @@ router.post('/payments', async (req, res) => {
       amount: payAmount,
       method: payMethod,
       paid_at: now.toISOString(),
-      status: 'success',
-    }, 'Payment successful. Meter reconnected.');
+      status: 'pending',
+    }, 'Payment submitted. Pending owner approval.');
   } catch (err) {
     await conn.rollback();
     console.error(err);

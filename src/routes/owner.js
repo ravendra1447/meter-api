@@ -2391,4 +2391,139 @@ router.delete('/other-active-charges/:otherActiveCharge', async (req, res) => {
     return fail(res, 'Failed to delete other active charge.', 500);
   }
 });
+router.get('/pending-payments', async (req, res) => {
+  try {
+    const ownerId = req.user.id;
+    const [payments] = await pool.query(
+      `SELECT tp.*, u.name as tenant_name, p.name as property_name, p.id as property_id
+       FROM tenant_payments tp
+       INNER JOIN property_tenants pt ON pt.tenant_id = tp.tenant_id AND pt.status = 'active'
+       INNER JOIN properties p ON p.id = pt.property_id
+       INNER JOIN users u ON u.id = tp.tenant_id
+       WHERE tp.status = 'pending' AND p.owner_id = ?
+       ORDER BY tp.created_at DESC`,
+      [ownerId]
+    );
+
+    return ok(res, payments);
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to fetch pending payments.', 500);
+  }
+});
+
+router.post('/approve-payment/:id', async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const paymentId = req.params.id;
+    const ownerId = req.user.id;
+
+    // Verify payment belongs to owner's property
+    const [payments] = await conn.query(
+      `SELECT tp.*, p.id as property_id, pt.id as assignment_id
+       FROM tenant_payments tp
+       INNER JOIN property_tenants pt ON pt.tenant_id = tp.tenant_id AND pt.status = 'active'
+       INNER JOIN properties p ON p.id = pt.property_id
+       WHERE tp.id = ? AND p.owner_id = ? AND tp.status = 'pending'`,
+      [paymentId, ownerId]
+    );
+
+    if (payments.length === 0) {
+      return fail(res, 'Payment not found or already processed.', 404);
+    }
+
+    const payment = payments[0];
+    const payAmount = Number(payment.amount);
+    const tenantId = payment.tenant_id;
+
+    await conn.beginTransaction();
+
+    await conn.query('UPDATE tenant_payments SET status = "success", updated_at = NOW() WHERE id = ?', [paymentId]);
+
+    // Update meter balance and trigger Relay ON
+    const [meterRows] = await conn.query(
+      `SELECT * FROM electricity_meters
+       WHERE property_id = ? AND status = 'active' AND meter_type = 'prepaid'
+       LIMIT 1`,
+      [payment.property_id]
+    );
+
+    if (meterRows.length) {
+      const meter = meterRows[0];
+      const newBalance = Number(meter.current_balance) + payAmount;
+      await conn.query(
+        'UPDATE electricity_meters SET current_balance = ?, updated_at = NOW() WHERE id = ?',
+        [newBalance, meter.id]
+      );
+
+      const [smartRows] = await conn.query('SELECT id FROM meters WHERE meter_number = ? LIMIT 1', [meter.meter_number]);
+      if (smartRows.length) {
+        await conn.query('UPDATE meters SET pending_relay_action = ?, updated_at = NOW() WHERE id = ?', ['ON', smartRows[0].id]);
+      }
+    }
+
+    // Deduct unbilled charges
+    let remaining = payAmount;
+    const [charges] = await conn.query(
+      `SELECT * FROM tenant_unbilled_charges WHERE tenant_id = ? AND status = 'active' ORDER BY id ASC`,
+      [tenantId]
+    );
+
+    for (const charge of charges) {
+      if (remaining <= 0) break;
+      const chargeAmount = Number(charge.amount);
+      if (remaining >= chargeAmount) {
+        await conn.query(
+          "UPDATE tenant_unbilled_charges SET status = 'used', updated_at = NOW() WHERE id = ?",
+          [charge.id]
+        );
+        
+        if (charge.description === 'Security Deposit (Advance)') {
+          await conn.query(
+            "UPDATE property_tenants SET deposit_paid = TRUE, updated_at = NOW() WHERE tenant_id = ? AND status = 'active'",
+            [tenantId]
+          );
+        }
+        
+        remaining -= chargeAmount;
+      }
+    }
+
+    await conn.commit();
+    return ok(res, { success: true }, 'Payment approved and meter activated.');
+  } catch (err) {
+    await conn.rollback();
+    console.error(err);
+    return fail(res, 'Failed to approve payment.', 500);
+  } finally {
+    conn.release();
+  }
+});
+
+router.post('/reject-payment/:id', async (req, res) => {
+  try {
+    const paymentId = req.params.id;
+    const ownerId = req.user.id;
+
+    const [payments] = await pool.query(
+      `SELECT tp.* FROM tenant_payments tp
+       INNER JOIN property_tenants pt ON pt.tenant_id = tp.tenant_id AND pt.status = 'active'
+       INNER JOIN properties p ON p.id = pt.property_id
+       WHERE tp.id = ? AND p.owner_id = ? AND tp.status = 'pending'`,
+      [paymentId, ownerId]
+    );
+
+    if (payments.length === 0) {
+      return fail(res, 'Payment not found or already processed.', 404);
+    }
+
+    await pool.query('UPDATE tenant_payments SET status = "rejected", updated_at = NOW() WHERE id = ?', [paymentId]);
+
+    return ok(res, { success: true }, 'Payment rejected.');
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to reject payment.', 500);
+  }
+});
+
 module.exports = router;
