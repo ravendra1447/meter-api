@@ -9,6 +9,7 @@ const { startScheduleCron } = require('./cron/scheduleCron');
   try {
     await pool.query('ALTER TABLE property_tenants ADD COLUMN agreement_duration_months INT DEFAULT 11');
     await pool.query('ALTER TABLE property_tenants ADD COLUMN deposit_paid BOOLEAN DEFAULT FALSE');
+    await pool.query('ALTER TABLE electricity_meters ADD COLUMN pending_relay_action VARCHAR(3) DEFAULT NULL');
   } catch (err) {
     if (err.code !== 'ER_DUP_FIELDNAME') {
       console.error('DB Migration error:', err);
