@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const pool = require('../config/database');
+const paymentMethods = require('../utils/paymentMethods');
 
 function formatUser(user) {
   return {
@@ -46,6 +47,9 @@ async function activeTenantAssignment(tenantUserId, conn = pool) {
     agreement_period_months: row.agreement_period_months,
     agreement_from: row.agreement_from,
     agreement_to: row.agreement_to,
+    accepted_payment_methods: paymentMethods.resolved(
+      paymentMethods.parseRow(row.accepted_payment_methods)
+    ),
     property: {
       id: row.property_id,
       owner_id: row.owner_id,

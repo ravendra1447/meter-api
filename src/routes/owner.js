@@ -15,6 +15,7 @@ const meterBillingScheduleService = require('../services/meterBillingScheduleSer
 const electricityConsumptionService = require('../services/electricityConsumptionService');
 const smartMeterService = require('../services/smartMeterService');
 const prepaidRelayService = require('../services/prepaidRelayService');
+const paymentMethods = require('../utils/paymentMethods');
 
 const router = express.Router();
 
@@ -229,6 +230,7 @@ router.get('/tenants', async (req, res) => {
         },
         move_in_date: a.move_in_date,
         status: a.status,
+        accepted_payment_methods: paymentMethods.resolved(paymentMethods.parseRow(a.accepted_payment_methods)),
         bill_status: stmt?.status ?? 'due',
         bill_status_label: stmt?.status_label ?? 'Payment Due',
         bill_amount: stmt?.total ?? 0,
@@ -252,10 +254,16 @@ router.post('/tenants', async (req, res) => {
       password,
       property_id,
       move_in_date,
+      accepted_payment_methods,
     } = req.body;
 
-    if (!name || !mobile || !password || !property_code) {
-      return fail(res, 'Name, mobile, password, and property_code are required.', 422);
+    const normalizedPayments = paymentMethods.normalize(accepted_payment_methods);
+    if (!normalizedPayments) {
+      return fail(res, 'Select at least one accepted payment method.', 422);
+    }
+
+    if (!name || !mobile || !password || !property_id) {
+      return fail(res, 'Name, mobile, password, and property_id are required.', 422);
     }
     if (!mobileRegex(mobile)) {
       return fail(res, 'Invalid mobile number format.', 422);
@@ -264,16 +272,10 @@ router.post('/tenants', async (req, res) => {
       return fail(res, 'Password must be at least 6 characters.', 422);
     }
 
-    const [propRows] = await conn.query(
-      'SELECT id, security_deposit_amount FROM properties WHERE property_code = ? AND owner_id = ? LIMIT 1',
-      [property_code, req.user.id]
-    );
-
-    if (!propRows.length) {
-      return fail(res, 'Invalid property code.', 404);
+    const property = await loadOwnerProperty(property_id, req.user.id);
+    if (!property) {
+      return fail(res, 'Property not found.', 404);
     }
-
-    const property = propRows[0];
 
     const [existingMobile] = await conn.query(
       'SELECT id FROM users WHERE mobile = ? LIMIT 1',
@@ -305,19 +307,10 @@ router.post('/tenants', async (req, res) => {
     );
 
     const [assignmentResult] = await conn.query(
-      `INSERT INTO property_tenants (property_id, tenant_id, move_in_date, agreement_duration_months, deposit_paid, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, FALSE, 'active', NOW(), NOW())`,
-      [property.id, userResult.insertId, moveIn, agreement_duration_months]
+      `INSERT INTO property_tenants (property_id, tenant_id, move_in_date, status, accepted_payment_methods, created_at, updated_at)
+       VALUES (?, ?, ?, 'active', ?, NOW(), NOW())`,
+      [property.id, userResult.insertId, moveIn, paymentMethods.toJson(normalizedPayments)]
     );
-
-    // Create a one-time charge for Security Deposit if it exists
-    if (property.security_deposit_amount && Number(property.security_deposit_amount) > 0) {
-      await conn.query(
-        `INSERT INTO tenant_unbilled_charges (tenant_id, amount, description, status, created_at, updated_at)
-         VALUES (?, ?, ?, 'active', NOW(), NOW())`,
-        [userResult.insertId, Number(property.security_deposit_amount), 'Security Deposit (Advance)']
-      );
-    }
 
     await conn.commit();
 
@@ -376,13 +369,22 @@ router.put('/tenants/:propertyTenant', async (req, res) => {
       return fail(res, 'Unauthorized.', 403);
     }
 
-    const { move_in_date, move_out_date, status } = req.body;
+    const { move_in_date, move_out_date, status, accepted_payment_methods } = req.body;
     if (status && !['active', 'inactive'].includes(status)) {
       return fail(res, 'Invalid status.', 422);
     }
 
     const updates = [];
     const values = [];
+
+    if (accepted_payment_methods !== undefined) {
+      const normalizedPayments = paymentMethods.normalize(accepted_payment_methods);
+      if (!normalizedPayments) {
+        return fail(res, 'Select at least one accepted payment method.', 422);
+      }
+      updates.push('accepted_payment_methods = ?');
+      values.push(paymentMethods.toJson(normalizedPayments));
+    }
 
     if (move_in_date !== undefined) {
       updates.push('move_in_date = ?');
@@ -587,7 +589,10 @@ router.post('/property-requests/:propertyRequest/approve', async (req, res) => {
       agreement_from,
       agreement_to,
       move_in_date,
+      accepted_payment_methods,
     } = req.body;
+
+    const normalizedPayments = paymentMethods.normalize(accepted_payment_methods) || paymentMethods.DEFAULT;
 
     if (
       monthly_rent === undefined ||
@@ -612,6 +617,7 @@ router.post('/property-requests/:propertyRequest/approve', async (req, res) => {
         agreement_from,
         agreement_to,
         move_in_date,
+        accepted_payment_methods: normalizedPayments,
       }
     );
 
@@ -810,6 +816,7 @@ router.post('/properties', async (req, res) => {
       security_deposit_amount,
       status,
     } = req.body;
+
     if (!name || !address) {
       return fail(res, 'Name and address are required.', 422);
     }
@@ -1132,56 +1139,6 @@ router.post('/properties/:property/meters', async (req, res) => {
   } catch (err) {
     console.error(err);
     return fail(res, 'Failed to add meter.', 500);
-  }
-});
-
-router.post('/meters/:meter/generate-postpaid-bill', async (req, res) => {
-  try {
-    const meterId = parseInt(req.params.meter, 10);
-    const meter = await loadOwnerMeter(meterId, req.user.id);
-    if (!meter) return fail(res, 'Meter not found.', 404);
-    if (meter.forbidden) return fail(res, 'Access denied.', 403);
-    
-    if (meter.meter_type !== 'postpaid') {
-      return fail(res, 'This API is only for postpaid meters.', 400);
-    }
-
-    const [tenantRows] = await pool.query(
-      `SELECT tenant_id FROM property_tenants WHERE property_id = ? AND status = 'active' LIMIT 1`,
-      [meter.property_id]
-    );
-    if (!tenantRows.length) {
-      return fail(res, 'No active tenant found for this property.', 400);
-    }
-    const tenantId = tenantRows[0].tenant_id;
-
-    const currentReading = Number(meter.last_reading) || 0;
-    const previousReading = Number(meter.last_billed_reading) || 0;
-    const unitsConsumed = Math.max(0, currentReading - previousReading);
-    
-    if (unitsConsumed <= 0) {
-      return fail(res, 'No new units consumed since last bill.', 400);
-    }
-
-    const tariff = Number(meter.tariff_per_unit) || 8;
-    const billAmount = Math.round(unitsConsumed * tariff * 100) / 100;
-
-    await pool.query(
-      `INSERT INTO tenant_unbilled_charges 
-       (tenant_id, property_id, charge_type, amount, charge_date, status, created_at, updated_at)
-       VALUES (?, ?, 'electricity_charges', ?, NOW(), 'active', NOW(), NOW())`,
-      [tenantId, meter.property_id, billAmount]
-    );
-
-    await pool.query(
-      `UPDATE electricity_meters SET last_billed_reading = ? WHERE id = ?`,
-      [currentReading, meter.id]
-    );
-
-    return ok(res, { unitsConsumed, billAmount }, 'Postpaid bill generated successfully.');
-  } catch (err) {
-    console.error(err);
-    return fail(res, 'Failed to generate postpaid bill.', 500);
   }
 });
 
@@ -2439,173 +2396,6 @@ router.delete('/other-active-charges/:otherActiveCharge', async (req, res) => {
   } catch (err) {
     console.error(err);
     return fail(res, 'Failed to delete other active charge.', 500);
-  }
-});
-router.get('/pending-payments', async (req, res) => {
-  try {
-    const ownerId = req.user.id;
-    const [payments] = await pool.query(
-      `SELECT tp.*, u.name as tenant_name, p.name as property_name, p.id as property_id
-       FROM tenant_payments tp
-       INNER JOIN property_tenants pt ON pt.tenant_id = tp.tenant_id AND pt.status = 'active'
-       INNER JOIN properties p ON p.id = pt.property_id
-       INNER JOIN users u ON u.id = tp.tenant_id
-       WHERE tp.status = 'pending' AND p.owner_id = ?
-       ORDER BY tp.created_at DESC`,
-      [ownerId]
-    );
-
-    return ok(res, payments);
-  } catch (err) {
-    console.error(err);
-    return fail(res, 'Failed to fetch pending payments.', 500);
-  }
-});
-
-router.post('/approve-payment/:id', async (req, res) => {
-  const conn = await pool.getConnection();
-  try {
-    const paymentId = req.params.id;
-    const ownerId = req.user.id;
-
-    // Verify payment belongs to owner's property
-    const [payments] = await conn.query(
-      `SELECT tp.*, p.id as property_id, pt.id as assignment_id
-       FROM tenant_payments tp
-       INNER JOIN property_tenants pt ON pt.tenant_id = tp.tenant_id AND pt.status = 'active'
-       INNER JOIN properties p ON p.id = pt.property_id
-       WHERE tp.id = ? AND p.owner_id = ? AND tp.status = 'pending'`,
-      [paymentId, ownerId]
-    );
-
-    if (payments.length === 0) {
-      return fail(res, 'Payment not found or already processed.', 404);
-    }
-
-    const payment = payments[0];
-    const payAmount = Number(payment.amount);
-    const tenantId = payment.tenant_id;
-
-    await conn.beginTransaction();
-
-    await conn.query('UPDATE tenant_payments SET status = "approved_pending_sync", updated_at = NOW() WHERE id = ?', [paymentId]);
-
-    // Update meter balance but DO NOT trigger Relay ON yet (Wait for Bluetooth Sync)
-    const [meterRows] = await conn.query(
-      `SELECT * FROM electricity_meters
-       WHERE property_id = ? AND status = 'active' AND meter_type = 'prepaid'
-       LIMIT 1`,
-      [payment.property_id]
-    );
-
-    if (meterRows.length) {
-      const meter = meterRows[0];
-      const newBalance = Number(meter.current_balance) + payAmount;
-      await conn.query(
-        'UPDATE electricity_meters SET current_balance = ?, updated_at = NOW() WHERE id = ?',
-        [newBalance, meter.id]
-      );
-      // NOTE: We do NOT set pending_relay_action = 'ON' here anymore. The tenant must sync.
-    }
-
-    // Deduct unbilled charges
-    let remaining = payAmount;
-    const [charges] = await conn.query(
-      `SELECT * FROM tenant_unbilled_charges WHERE tenant_id = ? AND status = 'active' ORDER BY id ASC`,
-      [tenantId]
-    );
-
-    for (const charge of charges) {
-      if (remaining <= 0) break;
-      const chargeAmount = Number(charge.amount);
-      if (remaining >= chargeAmount) {
-        await conn.query(
-          "UPDATE tenant_unbilled_charges SET status = 'used', updated_at = NOW() WHERE id = ?",
-          [charge.id]
-        );
-        
-        if (charge.description === 'Security Deposit (Advance)') {
-          await conn.query(
-            "UPDATE property_tenants SET deposit_paid = TRUE, updated_at = NOW() WHERE tenant_id = ? AND status = 'active'",
-            [tenantId]
-          );
-        }
-        
-        remaining -= chargeAmount;
-      }
-    }
-
-    await conn.commit();
-    return ok(res, { success: true }, 'Payment approved. Tenant needs to sync via Bluetooth.');
-  } catch (err) {
-    await conn.rollback();
-    console.error(err);
-    return fail(res, 'Failed to approve payment.', 500);
-  } finally {
-    conn.release();
-  }
-});
-
-router.post('/reject-payment/:id', async (req, res) => {
-  try {
-    const paymentId = req.params.id;
-    const ownerId = req.user.id;
-
-    const [payments] = await pool.query(
-      `SELECT tp.* FROM tenant_payments tp
-       INNER JOIN property_tenants pt ON pt.tenant_id = tp.tenant_id AND pt.status = 'active'
-       INNER JOIN properties p ON p.id = pt.property_id
-       WHERE tp.id = ? AND p.owner_id = ? AND tp.status = 'pending'`,
-      [paymentId, ownerId]
-    );
-
-    if (payments.length === 0) {
-      return fail(res, 'Payment not found or already processed.', 404);
-    }
-
-    await pool.query('UPDATE tenant_payments SET status = "rejected", updated_at = NOW() WHERE id = ?', [paymentId]);
-
-    return ok(res, { success: true }, 'Payment rejected.');
-  } catch (err) {
-    console.error(err);
-    return fail(res, 'Failed to reject payment.', 500);
-  }
-});
-
-router.post('/tenants/:id/cash-recharge', async (req, res) => {
-  try {
-    const tenantId = req.params.id;
-    const ownerId = req.user.id;
-    const { amount } = req.body;
-
-    if (!amount || amount <= 0) {
-      return fail(res, 'Invalid amount.', 422);
-    }
-
-    // Verify tenant belongs to owner
-    const [assignments] = await pool.query(
-      `SELECT pt.property_id FROM property_tenants pt
-       INNER JOIN properties p ON p.id = pt.property_id
-       WHERE pt.tenant_id = ? AND p.owner_id = ? AND pt.status = 'active' LIMIT 1`,
-      [tenantId, ownerId]
-    );
-
-    if (!assignments.length) {
-      return fail(res, 'Tenant assignment not found.', 404);
-    }
-
-    const receiptNo = 'CASH-' + Date.now() + Math.floor(Math.random() * 1000);
-
-    await pool.query(
-      `INSERT INTO tenant_payments (tenant_id, amount, method, receipt_no, status, created_at, updated_at)
-       VALUES (?, ?, 'cash', ?, 'cash_pending_sync', NOW(), NOW())`,
-      [tenantId, amount, receiptNo]
-    );
-
-    return ok(res, { success: true }, 'Cash recharge initiated. Tenant needs to accept and sync.');
-  } catch (err) {
-    console.error(err);
-    return fail(res, 'Failed to initiate cash recharge.', 500);
   }
 });
 

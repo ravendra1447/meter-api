@@ -1,4 +1,5 @@
 const pool = require('../config/database');
+const paymentMethods = require('../utils/paymentMethods');
 
 const STATUS_PENDING = 'pending';
 const STATUS_APPROVED = 'approved';
@@ -212,8 +213,8 @@ async function approve(request, ownerId, terms) {
       `INSERT INTO property_tenants
         (property_id, tenant_id, move_in_date, status, monthly_rent, water_charges,
          maintenance_charges, security_deposit_amount, agreement_period_months,
-         agreement_from, agreement_to, created_at, updated_at)
-       VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+         agreement_from, agreement_to, accepted_payment_methods, created_at, updated_at)
+       VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         request.property_id,
         request.tenant_id,
@@ -225,6 +226,9 @@ async function approve(request, ownerId, terms) {
         agreementMonths,
         formatDate(agreementFrom),
         formatDate(agreementTo),
+        paymentMethods.toJson(
+          paymentMethods.normalize(terms.accepted_payment_methods) || paymentMethods.DEFAULT
+        ),
       ]
     );
 
@@ -409,6 +413,9 @@ async function formatAssignment(assignment) {
     agreement_period_months: row.agreement_period_months,
     agreement_from: formatDate(row.agreement_from),
     agreement_to: formatDate(row.agreement_to),
+    accepted_payment_methods: paymentMethods.resolved(
+      paymentMethods.parseRow(row.accepted_payment_methods)
+    ),
     property: {
       id: row.property_id,
       property_code: row.property_code,

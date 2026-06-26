@@ -6,6 +6,7 @@ const { authenticate, requireRole } = require('../middleware/auth');
 const { paginatedQuery, mobileRegex, generatePropertyCode } = require('../helpers/userHelpers');
 const billingStatementService = require('../services/billingStatementService');
 const electricityConsumptionService = require('../services/electricityConsumptionService');
+const paymentMethods = require('../utils/paymentMethods');
 
 const router = express.Router();
 
@@ -551,7 +552,11 @@ router.post('/tenants', async (req, res, next) => {
       property_id: propertyId,
       move_in_date: moveInDate,
       status,
+      accepted_payment_methods,
     } = req.body;
+
+    const normalizedPayments =
+      paymentMethods.normalize(accepted_payment_methods) || paymentMethods.DEFAULT;
 
     if (!name || !mobile || !password || !propertyId) {
       return fail(res, 'name, mobile, password, and property_id are required.', 422);
@@ -575,9 +580,9 @@ router.post('/tenants', async (req, res, next) => {
 
     const today = new Date().toISOString().slice(0, 10);
     const [ptResult] = await conn.query(
-      `INSERT INTO property_tenants (property_id, tenant_id, move_in_date, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, NOW(), NOW())`,
-      [propertyId, userResult.insertId, moveInDate ?? today, status ?? 'active']
+      `INSERT INTO property_tenants (property_id, tenant_id, move_in_date, status, accepted_payment_methods, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
+      [propertyId, userResult.insertId, moveInDate ?? today, status ?? 'active', paymentMethods.toJson(normalizedPayments)]
     );
 
     await conn.commit();
@@ -611,9 +616,23 @@ router.put('/tenants/:propertyTenant', async (req, res, next) => {
     const assignment = await findPropertyTenant(req.params.propertyTenant);
     if (!assignment) return fail(res, 'Tenant assignment not found.', 404);
 
-    const { move_in_date: moveInDate, move_out_date: moveOutDate, status } = req.body;
+    const {
+      move_in_date: moveInDate,
+      move_out_date: moveOutDate,
+      status,
+      accepted_payment_methods,
+    } = req.body;
     const updates = [];
     const params = [];
+
+    if (accepted_payment_methods !== undefined) {
+      const normalizedPayments = paymentMethods.normalize(accepted_payment_methods);
+      if (!normalizedPayments) {
+        return fail(res, 'Select at least one accepted payment method.', 422);
+      }
+      updates.push('accepted_payment_methods = ?');
+      params.push(paymentMethods.toJson(normalizedPayments));
+    }
 
     if (moveInDate !== undefined) {
       updates.push('move_in_date = ?');

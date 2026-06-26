@@ -103,9 +103,7 @@ async function saveReading(
       if (electricityMeter) {
         const updatedElectricityMeter = await prepaidRelayService.deductBalanceForConsumption(
           electricityMeter,
-          dailyConsumption,
-          totalReading,
-          conn
+          dailyConsumption
         );
         currentBalance = Number(updatedElectricityMeter.current_balance);
 
@@ -114,8 +112,7 @@ async function saveReading(
         ]);
         relayActionRequired = await prepaidRelayService.syncPendingRelayFromBalance(
           freshMeterRows[0],
-          updatedElectricityMeter,
-          conn
+          updatedElectricityMeter
         );
       }
     }
@@ -196,7 +193,6 @@ async function dashboard(meterId) {
     tariff,
     bill_amount: round2(monthlyUsage * tariff),
     relay_status: meter.relay_status,
-    pending_relay_action: meter.pending_relay_action,
     status: meter.status,
   };
 }
