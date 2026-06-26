@@ -28,7 +28,7 @@ async function processDailyBilling() {
       
       let graceDays = 5;
       if (meter) {
-        const [scheduleRows] = await pool.query(`SELECT billing FROM meter_billing_schedules WHERE electricity_meter_id = ? AND status = 'active' LIMIT 1`, [meter.id]);
+        const [scheduleRows] = await pool.query(`SELECT billing FROM meter_billing_schedules WHERE electricity_meter_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1`, [meter.id]);
         if (scheduleRows.length && scheduleRows[0].billing) {
           try {
             const billingObj = typeof scheduleRows[0].billing === 'string' ? JSON.parse(scheduleRows[0].billing) : scheduleRows[0].billing;

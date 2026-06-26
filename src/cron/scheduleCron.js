@@ -14,14 +14,18 @@ async function processDailySchedules() {
 
     if (!schedules.length) return;
 
-    // Get current time in 'HH:mm' format
     const now = new Date();
-    const hours = now.getHours().toString().padStart(2, '0');
-    const minutes = now.getMinutes().toString().padStart(2, '0');
-    const currentTime = `${hours}:${minutes}`;
 
     for (const schedule of schedules) {
       if (!schedule.billing) continue;
+      
+      const tz = schedule.timezone || 'Asia/Kolkata';
+      const tzDateString = now.toLocaleString('en-US', { timeZone: tz });
+      const tzDate = new Date(tzDateString);
+      
+      const hours = tzDate.getHours().toString().padStart(2, '0');
+      const minutes = tzDate.getMinutes().toString().padStart(2, '0');
+      const currentTime = `${hours}:${minutes}`;
       
       const billing = typeof schedule.billing === 'string' 
         ? JSON.parse(schedule.billing) 
@@ -38,8 +42,8 @@ async function processDailySchedules() {
 
       let targetAction = null;
 
-      const currentDayOfWeek = now.getDay() === 0 ? 7 : now.getDay(); // 1-7
-      const currentDateOfMonth = now.getDate(); // 1-31
+      const currentDayOfWeek = tzDate.getDay() === 0 ? 7 : tzDate.getDay(); // 1-7
+      const currentDateOfMonth = tzDate.getDate(); // 1-31
       
       // Figure out if today is the action day based on schedule type
       let isOffDay = false;
@@ -67,27 +71,11 @@ async function processDailySchedules() {
         isOnDay = (currentDateOfMonth === expectedOnDay);
       }
 
-      if (offTime && onTime) {
-        if (offTime > onTime) {
-          // Night schedule (e.g. 23:00 to 06:00 next day)
-          if (isOffDay && currentTime >= offTime) {
-            targetAction = 'OFF';
-          } else if (isOnDay && currentTime < onTime) {
-            targetAction = 'OFF'; // still in the night window
-          } else if (isOnDay && currentTime >= onTime) {
-            targetAction = 'ON';
-          }
-        } else {
-          // Day schedule (e.g. 09:00 to 18:00 same day)
-          if (isOffDay && currentTime >= offTime && currentTime < onTime) {
-            targetAction = 'OFF';
-          } else if (isOnDay && currentTime >= onTime) {
-            targetAction = 'ON';
-          }
-        }
-      } else if (offTime && isOffDay && currentTime >= offTime) {
+      // Only trigger exactly at the scheduled minute, 
+      // so we don't continuously force the state and prevent manual overrides.
+      if (offTime && isOffDay && currentTime === offTime) {
         targetAction = 'OFF';
-      } else if (onTime && isOnDay && currentTime >= onTime) {
+      } else if (onTime && isOnDay && currentTime === onTime) {
         targetAction = 'ON';
       }
 
