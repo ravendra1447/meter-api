@@ -99,11 +99,12 @@ async function saveReading(
     let currentBalance = null;
 
     if (isBleSync) {
-      const electricityMeter = await prepaidRelayService.resolveElectricityMeter(meter);
+      const electricityMeter = await prepaidRelayService.resolveElectricityMeter(meter, conn);
       if (electricityMeter) {
         const updatedElectricityMeter = await prepaidRelayService.deductBalanceForConsumption(
           electricityMeter,
-          dailyConsumption
+          dailyConsumption,
+          conn
         );
         currentBalance = Number(updatedElectricityMeter.current_balance);
 
@@ -112,7 +113,8 @@ async function saveReading(
         ]);
         relayActionRequired = await prepaidRelayService.syncPendingRelayFromBalance(
           freshMeterRows[0],
-          updatedElectricityMeter
+          updatedElectricityMeter,
+          conn
         );
       }
     }
