@@ -1342,10 +1342,10 @@ router.get('/meters/:electricityMeter/smart-status', async (req, res) => {
     }
 
     const [schedules] = await pool.query(
-      `SELECT * FROM meter_billing_schedules
-       WHERE electricity_meter_id = ? AND status = 'active'
-       ORDER BY next_run ASC`,
-      [meter.id]
+      `SELECT * FROM meter_relay_schedules
+       WHERE meter_id = ?
+       ORDER BY schedule_time ASC`,
+      [smartMeter.id]
     );
 
     return ok(res, {
@@ -1467,7 +1467,7 @@ router.post('/meters/:electricityMeter/relay-schedules', async (req, res) => {
       return fail(res, 'You do not have access to this meter.', 403);
     }
 
-    const { action, schedule_time, days_of_week, schedule_type = 'daily' } = req.body;
+    const { action, schedule_time, days_of_week } = req.body;
     if (!action || !['ON', 'OFF'].includes(action)) {
       return fail(res, 'Action must be ON or OFF.', 422);
     }
@@ -1476,43 +1476,23 @@ router.post('/meters/:electricityMeter/relay-schedules', async (req, res) => {
     }
 
     const smartMeter = await resolveOrCreateSmartMeter(meter);
-    
-    // Build billing object with relay schedule info
-    const billing = {
-      relay_schedule_type: schedule_type,
-      relay_schedule_day: schedule_type === 'weekly' ? (days_of_week?.split(',')[0] || 1) : 1,
-      relay_off_time: action === 'OFF' ? schedule_time : null,
-      relay_on_time: action === 'ON' ? schedule_time : null,
-    };
+    const timeValue = `${schedule_time}:00`;
 
     const [result] = await pool.query(
-      `INSERT INTO meter_billing_schedules
-       (owner_id, electricity_meter_id, smart_meter_id, schedule_type, schedule_name,
-        run_time, run_day, timezone, billing, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-      [
-        req.user.id,
-        meter.id,
-        smartMeter.id,
-        schedule_type,
-        `Relay ${action} Schedule`,
-        schedule_time,
-        schedule_type === 'weekly' ? (days_of_week?.split(',')[0] || 1) : null,
-        'Asia/Kolkata',
-        JSON.stringify(billing),
-        'active'
-      ]
+      `INSERT INTO meter_relay_schedules (meter_id, action, schedule_time, days_of_week, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, NOW(), NOW())`,
+      [smartMeter.id, action, timeValue, days_of_week ?? null]
     );
 
     const [rows] = await pool.query(
-      'SELECT * FROM meter_billing_schedules WHERE id = ? LIMIT 1',
+      'SELECT * FROM meter_relay_schedules WHERE id = ? LIMIT 1',
       [result.insertId]
     );
 
     return ok(
       res,
       rows[0],
-      'Relay schedule saved. Schedule will trigger at specified time.',
+      'Relay schedule saved. With SIM: server sends via 4G/MQTT at scheduled time. Without SIM: connect Bluetooth to execute.',
       201
     );
   } catch (err) {
@@ -1531,17 +1511,22 @@ router.delete('/meters/:electricityMeter/relay-schedules/:schedule', async (req,
       return fail(res, 'You do not have access to this meter.', 403);
     }
 
+    const smartMeter = await resolveSmartMeter(meter);
+    if (!smartMeter) {
+      return fail(res, 'Schedule not found for this meter.', 404);
+    }
+
     const scheduleId = parseInt(req.params.schedule, 10);
     const [scheduleRows] = await pool.query(
-      'SELECT * FROM meter_billing_schedules WHERE id = ? AND electricity_meter_id = ? LIMIT 1',
-      [scheduleId, meter.id]
+      'SELECT * FROM meter_relay_schedules WHERE id = ? AND meter_id = ? LIMIT 1',
+      [scheduleId, smartMeter.id]
     );
 
     if (!scheduleRows.length) {
       return fail(res, 'Schedule not found for this meter.', 404);
     }
 
-    await pool.query('DELETE FROM meter_billing_schedules WHERE id = ?', [scheduleId]);
+    await pool.query('DELETE FROM meter_relay_schedules WHERE id = ?', [scheduleId]);
     return ok(res, null, 'Schedule deleted.');
   } catch (err) {
     console.error(err);
