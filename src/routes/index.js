@@ -8,6 +8,7 @@ const smartMetersRouter = require('./smartMeters');
 const bluetoothRouter = require('./bluetooth');
 const usageRouter = require('./usage');
 const mqttRouter = require('./mqtt');
+const locationRouter = require('./locationRoutes'); // ADD THIS
 
 const router = express.Router();
 
@@ -30,6 +31,7 @@ router.get('/', (req, res) => {
         'POST /api/owner/properties': 'Create property',
         'GET /api/owner/properties/{id}': 'Property details',
         'POST /api/owner/properties/{id}/meters': 'Add electricity meter',
+        'GET /api/owner/meters-with-location': 'Get meters with location',
       },
       master: {
         'GET /api/master/dashboard': 'Stats overview',
@@ -53,6 +55,15 @@ router.get('/', (req, res) => {
         'GET /api/smart-meters/{meterId}/dashboard': 'Meter dashboard data',
         'POST /api/smart-meters': 'Register new smart meter',
       },
+      // ========== LOCATION ENDPOINTS ==========
+      location: {
+        'POST /api/meters/location': 'Save meter GPS location',
+        'POST /api/meters/installation': 'Save meter installation date',
+        'GET /api/meters/{meterId}/scan-info': 'Get meter scan information',
+        'GET /api/meters/location-history/{meterId}': 'Get location history',
+        'GET /api/meters/installation-logs/{meterId}': 'Get installation logs',
+        'GET /api/owner/meters-with-location': 'Get meters with location (owner)',
+      },
       mqtt: {
         'POST /api/mqtt/uplink': 'MQTT uplink webhook stub',
       },
@@ -61,6 +72,7 @@ router.get('/', (req, res) => {
   });
 });
 
+// ========== REGISTER ROUTES ==========
 router.use('/auth', authRouter);
 router.use('/owner', ownerRouter);
 router.use('/tenant', tenantRouter);
@@ -69,5 +81,6 @@ router.use('/smart-meters', smartMetersRouter);
 router.use('/bluetooth', bluetoothRouter);
 router.use('/usage', usageRouter);
 router.use('/mqtt', mqttRouter);
+router.use('/', locationRouter); // ADD THIS - No prefix needed
 
 module.exports = router;
