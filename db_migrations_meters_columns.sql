@@ -1,0 +1,7 @@
+ALTER TABLE meters
+ADD COLUMN latitude DECIMAL(10,8) NULL,
+ADD COLUMN longitude DECIMAL(11,8) NULL,
+ADD COLUMN installation_date DATETIME NULL,
+ADD COLUMN first_scan_date DATETIME NULL,
+ADD COLUMN last_scan_date DATETIME NULL,
+ADD COLUMN scan_count INT DEFAULT 0;

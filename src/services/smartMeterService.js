@@ -44,9 +44,10 @@ async function findByMac(mac) {
   return rows[0] ?? null;
 }
 
-async function registerByMac(mac, meterNumber = null, tariff = null) {
+async function registerByMac(mac, meterNumber = null, tariff = null, locationData = {}) {
   const normalizedMac = normalizeMac(mac);
   const formattedMac = formatMac(normalizedMac);
+  const { latitude = null, longitude = null, installation_date = null } = locationData;
 
   const existing = await findByMac(normalizedMac);
 
@@ -58,7 +59,7 @@ async function registerByMac(mac, meterNumber = null, tariff = null) {
     );
 
     if (linkedRows.length > 0) {
-      const error = new Error('This meter is already allowed/added to another account. You cannot scan it.');
+      const error = new Error('This meter is already registered');
       error.status = 422;
       throw error;
     }
@@ -76,6 +77,19 @@ async function registerByMac(mac, meterNumber = null, tariff = null) {
       updates.push('tariff = ?');
       params.push(tariff);
     }
+    
+    // Update scan information
+    updates.push('last_scan_date = NOW()');
+    updates.push('scan_count = COALESCE(scan_count, 0) + 1');
+    if (latitude) {
+      updates.push('latitude = ?');
+      params.push(latitude);
+    }
+    if (longitude) {
+      updates.push('longitude = ?');
+      params.push(longitude);
+    }
+
     updates.push('updated_at = NOW()');
     params.push(existing.id);
 
@@ -102,6 +116,18 @@ async function registerByMac(mac, meterNumber = null, tariff = null) {
       }
       updates.push('meter_address = ?');
       params.push(meterNumberToAddress(meterNumber));
+      
+      updates.push('last_scan_date = NOW()');
+      updates.push('scan_count = COALESCE(scan_count, 0) + 1');
+      if (latitude) {
+        updates.push('latitude = ?');
+        params.push(latitude);
+      }
+      if (longitude) {
+        updates.push('longitude = ?');
+        params.push(longitude);
+      }
+
       updates.push('updated_at = NOW()');
       params.push(byNumber.id);
 
@@ -116,13 +142,17 @@ async function registerByMac(mac, meterNumber = null, tariff = null) {
 
   const [result] = await pool.query(
     `INSERT INTO meters (
-      meter_number, bluetooth_mac, meter_address, tariff, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 'active', NOW(), NOW())`,
+      meter_number, bluetooth_mac, meter_address, tariff, status, created_at, updated_at,
+      latitude, longitude, installation_date, first_scan_date, scan_count, last_scan_date
+    ) VALUES (?, ?, ?, ?, 'active', NOW(), NOW(), ?, ?, COALESCE(?, NOW()), NOW(), 1, NOW())`,
     [
       resolvedNumber,
       formattedMac,
       meterNumberToAddress(resolvedNumber),
       tariff ?? 8,
+      latitude,
+      longitude,
+      installation_date,
     ]
   );
 

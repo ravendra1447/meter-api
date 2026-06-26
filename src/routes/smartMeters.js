@@ -22,7 +22,7 @@ router.get('/', async (req, res, next) => {
 
 router.post('/register', async (req, res, next) => {
   try {
-    const { bluetooth_mac: bluetoothMac, meter_number: meterNumber, tariff } = req.body;
+    const { bluetooth_mac: bluetoothMac, meter_number: meterNumber, tariff, latitude, longitude, installation_date } = req.body;
 
     if (!bluetoothMac) {
       return fail(res, 'The bluetooth mac field is required.', 422);
@@ -31,7 +31,12 @@ router.post('/register', async (req, res, next) => {
     const meter = await smartMeterService.registerByMac(
       bluetoothMac,
       meterNumber ?? null,
-      tariff != null ? Number(tariff) : null
+      tariff != null ? Number(tariff) : null,
+      {
+        latitude: latitude ?? null,
+        longitude: longitude ?? null,
+        installation_date: installation_date ?? new Date(),
+      }
     );
 
     return res.status(200).json({
@@ -60,7 +65,7 @@ router.get('/by-mac/:mac', async (req, res, next) => {
 
 router.post('/', async (req, res, next) => {
   try {
-    const { meter_number: meterNumber, bluetooth_mac: bluetoothMac, meter_address: meterAddress, tariff } =
+    const { meter_number: meterNumber, bluetooth_mac: bluetoothMac, meter_address: meterAddress, tariff, latitude, longitude, installation_date } =
       req.body;
 
     if (!meterNumber) {
@@ -73,9 +78,9 @@ router.post('/', async (req, res, next) => {
     }
 
     const [result] = await pool.query(
-      `INSERT INTO meters (meter_number, bluetooth_mac, meter_address, tariff, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'active', NOW(), NOW())`,
-      [meterNumber, bluetoothMac ?? null, meterAddress ?? null, tariff ?? 8]
+      `INSERT INTO meters (meter_number, bluetooth_mac, meter_address, tariff, status, created_at, updated_at, latitude, longitude, installation_date, first_scan_date, scan_count, last_scan_date)
+       VALUES (?, ?, ?, ?, 'active', NOW(), NOW(), ?, ?, COALESCE(?, NOW()), NOW(), 1, NOW())`,
+      [meterNumber, bluetoothMac ?? null, meterAddress ?? null, tariff ?? 8, latitude ?? null, longitude ?? null, installation_date ?? null]
     );
 
     const [rows] = await pool.query('SELECT * FROM meters WHERE id = ? LIMIT 1', [result.insertId]);

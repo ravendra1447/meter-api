@@ -402,7 +402,7 @@ router.post('/payments', async (req, res) => {
       const meter = meterRows[0];
       const newBalance = Number(meter.current_balance) + payAmount;
       await conn.query(
-        'UPDATE electricity_meters SET current_balance = ?, updated_at = NOW() WHERE id = ?',
+        'UPDATE electricity_meters SET current_balance = ?, grace_period_ends_at = NULL, next_billing_date = DATE_ADD(COALESCE(next_billing_date, CURRENT_DATE()), INTERVAL 1 MONTH), updated_at = NOW() WHERE id = ?',
         [newBalance, meter.id]
       );
       

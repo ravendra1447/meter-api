@@ -251,6 +251,7 @@ async function checkBalanceAndRelay() {
       WHERE em.status = 'active'
         AND em.current_balance <= 0
         AND m.relay_status = 'ON'
+        AND (em.grace_period_ends_at IS NULL OR em.grace_period_ends_at <= NOW())
     `);
 
     for (const meter of meters) {

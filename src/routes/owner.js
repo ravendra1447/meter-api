@@ -1077,8 +1077,9 @@ router.post('/properties/:property/meters', async (req, res) => {
     const [result] = await pool.query(
       `INSERT INTO electricity_meters
         (property_id, meter_name, meter_number, model_number, series_number, meter_type,
-         initial_balance, current_balance, tariff_per_unit, last_reading, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+         initial_balance, current_balance, tariff_per_unit, last_reading, status, created_at, updated_at,
+         latitude, longitude, installation_date, first_scan_date, scan_count, last_scan_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?, ?, ?, NOW(), 1, NOW())`,
       [
         property.id,
         meter_name,
@@ -1091,6 +1092,9 @@ router.post('/properties/:property/meters', async (req, res) => {
         tariff_per_unit ?? 8,
         last_reading ?? 0,
         status ?? 'active',
+        req.body.latitude ?? null,
+        req.body.longitude ?? null,
+        req.body.installation_date ?? new Date(),
       ]
     );
 
@@ -1185,6 +1189,9 @@ router.put('/meters/:meter', async (req, res) => {
       'tariff_per_unit',
       'last_reading',
       'status',
+      'latitude',
+      'longitude',
+      'installation_date',
     ];
 
     const updates = [];

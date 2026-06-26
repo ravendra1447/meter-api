@@ -15,11 +15,18 @@ async function deductBalanceForConsumption(electricityMeter, unitsConsumed, conn
     Math.round((Number(electricityMeter.current_balance) - charge) * 100) / 100
   );
 
+  let gracePeriodQuery = '';
+  let queryParams = [newBalance, electricityMeter.last_reading];
+
+  if (newBalance <= 0 && Number(electricityMeter.current_balance) > 0) {
+    gracePeriodQuery = ', grace_period_ends_at = DATE_ADD(CURDATE(), INTERVAL 5 DAY) + INTERVAL 11 HOUR';
+  }
+
   await conn.query(
     `UPDATE electricity_meters
-     SET current_balance = ?, last_reading = ?, updated_at = NOW()
+     SET current_balance = ?, last_reading = ?${gracePeriodQuery}, updated_at = NOW()
      WHERE id = ?`,
-    [newBalance, electricityMeter.last_reading, electricityMeter.id]
+    [...queryParams, electricityMeter.id]
   );
 
   const [rows] = await conn.query('SELECT * FROM electricity_meters WHERE id = ? LIMIT 1', [
@@ -36,11 +43,15 @@ async function syncPendingRelayFromBalance(smartMeter, electricityMeter, conn = 
   const balance = Number(electricityMeter.current_balance);
 
   if (balance <= 0) {
-    await conn.query(
-      'UPDATE meters SET pending_relay_action = ?, updated_at = NOW() WHERE id = ?',
-      ['OFF', smartMeter.id]
-    );
-    return 'OFF';
+    const isGraceActive = electricityMeter.grace_period_ends_at && new Date(electricityMeter.grace_period_ends_at) > new Date();
+    if (!isGraceActive) {
+      await conn.query(
+        'UPDATE meters SET pending_relay_action = ?, updated_at = NOW() WHERE id = ?',
+        ['OFF', smartMeter.id]
+      );
+      return 'OFF';
+    }
+    return null;
   }
 
   if (smartMeter.relay_status === 'OFF') {
