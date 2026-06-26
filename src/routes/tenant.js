@@ -126,6 +126,8 @@ router.get('/dashboard', async (req, res) => {
               relaySchedule = {
                 type: billingObj.relay_schedule_type,
                 day: billingObj.relay_schedule_day || 1,
+                off_date: billingObj.relay_off_date || null,
+                on_date: billingObj.relay_on_date || null,
                 off_time: billingObj.relay_off_time || billingObj.daily_off_time || null,
                 on_time: billingObj.relay_on_time || billingObj.daily_on_time || null,
               };

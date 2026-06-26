@@ -69,6 +69,18 @@ async function processDailySchedules() {
           expectedOnDay = tempDate.getDate();
         }
         isOnDay = (currentDateOfMonth === expectedOnDay);
+      } else if (scheduleType === 'once') {
+        const year = tzDate.getFullYear();
+        const month = (tzDate.getMonth() + 1).toString().padStart(2, '0');
+        const day = tzDate.getDate().toString().padStart(2, '0');
+        const currentDateString = `${year}-${month}-${day}`;
+        
+        if (billing.relay_off_date && billing.relay_off_date === currentDateString) {
+          isOffDay = true;
+        }
+        if (billing.relay_on_date && billing.relay_on_date === currentDateString) {
+          isOnDay = true;
+        }
       }
 
       // Only trigger exactly at the scheduled minute, 
