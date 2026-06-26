@@ -50,28 +50,20 @@ async function deductBalanceForConsumption(electricityMeter, unitsConsumed, tota
 async function syncPendingRelayFromBalance(smartMeter, electricityMeter) {
   const balance = Number(electricityMeter.current_balance);
 
+  // If balance is depleted, force it OFF immediately.
   if (balance <= 0) {
-    await pool.query(
-      'UPDATE meters SET pending_relay_action = ?, updated_at = NOW() WHERE id = ?',
-      ['OFF', smartMeter.id]
-    );
+    if (smartMeter.pending_relay_action !== 'OFF') {
+      await pool.query(
+        'UPDATE meters SET pending_relay_action = ?, updated_at = NOW() WHERE id = ?',
+        ['OFF', smartMeter.id]
+      );
+    }
     return 'OFF';
   }
 
-  if (smartMeter.relay_status === 'OFF') {
-    await pool.query(
-      'UPDATE meters SET pending_relay_action = ?, updated_at = NOW() WHERE id = ?',
-      ['ON', smartMeter.id]
-    );
-    return 'ON';
-  }
-
-  await pool.query(
-    'UPDATE meters SET pending_relay_action = NULL, updated_at = NOW() WHERE id = ?',
-    [smartMeter.id]
-  );
-
-  return null;
+  // If balance is positive, just return whatever action is currently pending (like from a schedule).
+  // We no longer automatically force ON here or clear to NULL, because payments/schedules manage that explicitly.
+  return smartMeter.pending_relay_action;
 }
 
 async function resolveElectricityMeter(smartMeter) {

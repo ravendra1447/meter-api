@@ -99,18 +99,16 @@ async function processDailySchedules() {
         
         if (meterRows.length > 0) {
           const meter = meterRows[0];
-          if (meter.pending_relay_action !== targetAction) {
-            console.log(`[Schedule] Meter ${meter.id} time is ${currentTime}, setting pending_relay_action to ${targetAction}`);
-            await pool.query(
-              'UPDATE electricity_meters SET pending_relay_action = ? WHERE id = ?',
-              [targetAction, meter.id]
-            );
-            // Also update legacy meters table so tenant dashboard reflects the change instantly
-            await pool.query(
-              'UPDATE meters SET relay_status = ? WHERE meter_number = (SELECT meter_number FROM electricity_meters WHERE id = ?)',
-              [targetAction, meter.id]
-            );
-          }
+          console.log(`[Schedule] Meter ${meter.id} time is ${currentTime}, setting pending_relay_action to ${targetAction}`);
+          await pool.query(
+            'UPDATE electricity_meters SET pending_relay_action = ? WHERE id = ?',
+            [targetAction, meter.id]
+          );
+          // Also update legacy meters table so the UI reflects it instantly, AND BLE sync will pick up the pending action
+          await pool.query(
+            'UPDATE meters SET pending_relay_action = ?, relay_status = ? WHERE meter_number = (SELECT meter_number FROM electricity_meters WHERE id = ?)',
+            [targetAction, targetAction, meter.id]
+          );
         }
       }
     }
