@@ -51,6 +51,18 @@ async function registerByMac(mac, meterNumber = null, tariff = null) {
   const existing = await findByMac(normalizedMac);
 
   if (existing) {
+    // Check if it is linked to an electricity_meter
+    const [linkedRows] = await pool.query(
+      'SELECT id, meter_name FROM electricity_meters WHERE meter_number = ? LIMIT 1',
+      [existing.meter_number]
+    );
+
+    if (linkedRows.length > 0) {
+      const error = new Error('This meter is already allowed/added to another account. You cannot scan it.');
+      error.status = 422;
+      throw error;
+    }
+
     const updates = [];
     const params = [];
 

@@ -97,10 +97,10 @@ async function processDailySchedules() {
           break;
 
         case 'once':
-          if (billing.relay_off_date && billing.relay_off_date === currentDateString) {
+          if (billing.relay_off_date && String(billing.relay_off_date).startsWith(currentDateString)) {
             isOffDay = true;
           }
-          if (billing.relay_on_date && billing.relay_on_date === currentDateString) {
+          if (billing.relay_on_date && String(billing.relay_on_date).startsWith(currentDateString)) {
             isOnDay = true;
           }
           break;
@@ -109,7 +109,7 @@ async function processDailySchedules() {
       // ========== OFF TIME - METER CUT ==========
       if (offTime && isOffDay) {
         const diff = timeDifference(currentTime, offTime);
-        if (diff >= -2 && diff <= 2) {
+        if (diff !== null && diff >= -2 && diff <= 2) {
           // Check if already executed today
           const [existing] = await pool.query(
             `SELECT id FROM schedule_execution_logs 
@@ -129,7 +129,7 @@ async function processDailySchedules() {
       // ========== ON TIME ==========
       if (onTime && isOnDay) {
         const diff = timeDifference(currentTime, onTime);
-        if (diff >= -2 && diff <= 2) {
+        if (diff !== null && diff >= -2 && diff <= 2) {
           const [existing] = await pool.query(
             `SELECT id FROM schedule_execution_logs 
              WHERE schedule_id = ? AND action = 'ON' 
@@ -162,9 +162,35 @@ async function processDailySchedules() {
  * Calculate time difference in minutes
  */
 function timeDifference(currentTime, scheduledTime) {
-  const [curHour, curMin] = currentTime.split(':').map(Number);
-  const [schHour, schMin] = scheduledTime.split(':').map(Number);
-  return (curHour * 60 + curMin) - (schHour * 60 + schMin);
+  if (!scheduledTime) return null;
+  
+  const parseTime = (timeStr) => {
+    const ampmMatch = String(timeStr).match(/(\d{1,2}):(\d{1,2})(?:\s*:\s*\d{1,2})?\s*(am|pm)/i);
+    if (ampmMatch) {
+      let hour = parseInt(ampmMatch[1], 10);
+      const min = parseInt(ampmMatch[2], 10);
+      const ampm = ampmMatch[3].toLowerCase();
+      if (ampm === 'pm' && hour < 12) hour += 12;
+      if (ampm === 'am' && hour === 12) hour = 0;
+      return hour * 60 + min;
+    }
+    
+    const parts = String(timeStr).split(':');
+    if (parts.length >= 2) {
+      const hour = parseInt(parts[0], 10);
+      const min = parseInt(parts[1], 10);
+      if (!isNaN(hour) && !isNaN(min)) {
+        return hour * 60 + min;
+      }
+    }
+    return null;
+  };
+
+  const currentMins = parseTime(currentTime);
+  const scheduledMins = parseTime(scheduledTime);
+  
+  if (currentMins === null || scheduledMins === null) return null;
+  return currentMins - scheduledMins;
 }
 
 /**
