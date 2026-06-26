@@ -3,7 +3,7 @@ const pool = require('../config/database');
 /**
  * Deduct prepaid balance for units consumed (kWh × tariff).
  */
-async function deductBalanceForConsumption(electricityMeter, unitsConsumed, totalReading) {
+async function deductBalanceForConsumption(electricityMeter, unitsConsumed, totalReading, conn = pool) {
   if (unitsConsumed <= 0 && (!totalReading || totalReading <= Number(electricityMeter.last_reading))) {
     return electricityMeter;
   }
@@ -14,7 +14,7 @@ async function deductBalanceForConsumption(electricityMeter, unitsConsumed, tota
 
   if (electricityMeter.meter_type === 'postpaid') {
     // For postpaid, we do not deduct balance, just update reading
-    await pool.query(
+    await conn.query(
       `UPDATE electricity_meters
        SET last_reading = ?, updated_at = NOW()
        WHERE id = ?`,
@@ -29,7 +29,7 @@ async function deductBalanceForConsumption(electricityMeter, unitsConsumed, tota
       Math.round((Number(electricityMeter.current_balance) - charge) * 100) / 100
     );
 
-    await pool.query(
+    await conn.query(
       `UPDATE electricity_meters
        SET current_balance = ?, last_reading = ?, updated_at = NOW()
        WHERE id = ?`,
@@ -37,7 +37,7 @@ async function deductBalanceForConsumption(electricityMeter, unitsConsumed, tota
     );
   }
 
-  const [rows] = await pool.query('SELECT * FROM electricity_meters WHERE id = ? LIMIT 1', [
+  const [rows] = await conn.query('SELECT * FROM electricity_meters WHERE id = ? LIMIT 1', [
     electricityMeter.id,
   ]);
 
@@ -47,13 +47,13 @@ async function deductBalanceForConsumption(electricityMeter, unitsConsumed, tota
 /**
  * Queue BLE relay OFF when balance is 0; ON when balance restored after trip.
  */
-async function syncPendingRelayFromBalance(smartMeter, electricityMeter) {
+async function syncPendingRelayFromBalance(smartMeter, electricityMeter, conn = pool) {
   const balance = Number(electricityMeter.current_balance);
 
   // If balance is depleted, force it OFF immediately.
   if (balance <= 0) {
     if (smartMeter.pending_relay_action !== 'OFF') {
-      await pool.query(
+      await conn.query(
         'UPDATE meters SET pending_relay_action = ?, updated_at = NOW() WHERE id = ?',
         ['OFF', smartMeter.id]
       );

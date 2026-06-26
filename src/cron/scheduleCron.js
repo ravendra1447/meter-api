@@ -101,13 +101,13 @@ async function processDailySchedules() {
           const meter = meterRows[0];
           console.log(`[Schedule] Meter ${meter.id} time is ${currentTime}, setting pending_relay_action to ${targetAction}`);
           await pool.query(
-            'UPDATE electricity_meters SET pending_relay_action = ? WHERE id = ?',
-            [targetAction, meter.id]
+            'UPDATE electricity_meters SET pending_relay_action = ? WHERE id = ? AND pending_relay_action != ?',
+            [targetAction, meter.id, targetAction]
           );
           // Also update legacy meters table so the UI reflects it instantly, AND BLE sync will pick up the pending action
           await pool.query(
-            'UPDATE meters SET pending_relay_action = ?, relay_status = ? WHERE meter_number = (SELECT meter_number FROM electricity_meters WHERE id = ?)',
-            [targetAction, targetAction, meter.id]
+            'UPDATE meters SET pending_relay_action = ?, relay_status = ? WHERE meter_number = (SELECT meter_number FROM electricity_meters WHERE id = ?) AND (relay_status != ? OR pending_relay_action != ?)',
+            [targetAction, targetAction, meter.id, targetAction, targetAction]
           );
         }
       }

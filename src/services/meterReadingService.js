@@ -104,7 +104,8 @@ async function saveReading(
         const updatedElectricityMeter = await prepaidRelayService.deductBalanceForConsumption(
           electricityMeter,
           dailyConsumption,
-          totalReading
+          totalReading,
+          conn
         );
         currentBalance = Number(updatedElectricityMeter.current_balance);
 
@@ -113,7 +114,8 @@ async function saveReading(
         ]);
         relayActionRequired = await prepaidRelayService.syncPendingRelayFromBalance(
           freshMeterRows[0],
-          updatedElectricityMeter
+          updatedElectricityMeter,
+          conn
         );
       }
     }
