@@ -3,14 +3,42 @@ const pool = require('../config/database');
 const paymentMethods = require('../utils/paymentMethods');
 
 function formatUser(user) {
+  const isPropertyOwner = !!user.is_property_owner;
+  const role = user.role;
+  const canAccessOwner = role === 'owner' || role === 'master' || isPropertyOwner;
+
   return {
     id: user.id,
     name: user.name,
     mobile: user.mobile,
     email: user.email,
-    role: user.role,
+    role,
+    is_property_owner: isPropertyOwner,
+    can_access_owner: canAccessOwner,
+    can_access_tenant: role === 'tenant',
     is_active: !!user.is_active,
   };
+}
+
+async function enrichUser(user) {
+  const formatted = formatUser(user);
+  if (user.role !== 'master') {
+    const assignment = await activeTenantAssignment(user.id);
+    formatted.can_access_tenant = user.role === 'tenant' || !!assignment;
+  }
+  if (formatted.can_access_owner) {
+    const [props] = await pool.query(
+      'SELECT COUNT(*) AS c FROM properties WHERE owner_id = ?',
+      [user.id]
+    );
+    const [meters] = await pool.query(
+      'SELECT COUNT(*) AS c FROM electricity_meters WHERE owner_id = ? AND property_id IS NULL',
+      [user.id]
+    );
+    formatted.properties_count = Number(props[0].c);
+    formatted.unassigned_meters_count = Number(meters[0].c);
+  }
+  return formatted;
 }
 
 async function generatePropertyCode(conn = pool) {
@@ -81,6 +109,7 @@ function mobileRegex(mobile) {
 
 module.exports = {
   formatUser,
+  enrichUser,
   generatePropertyCode,
   activeTenantAssignment,
   paginatedQuery,

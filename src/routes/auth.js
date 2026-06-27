@@ -4,7 +4,7 @@ const pool = require('../config/database');
 const { ok, fail } = require('../utils/response');
 const { createToken, revokeAllTokens, revokeToken } = require('../utils/sanctum');
 const { authenticate } = require('../middleware/auth');
-const { formatUser, mobileRegex } = require('../helpers/userHelpers');
+const { formatUser, enrichUser, mobileRegex } = require('../helpers/userHelpers');
 
 const router = express.Router();
 
@@ -62,7 +62,27 @@ router.post('/owner/register', async (req, res) => {
       return fail(res, 'Invalid email address.', 422);
     }
     if (!(await uniqueMobile(mobile))) {
-      return fail(res, 'Mobile number already registered.', 422);
+      const [existingRows] = await pool.query('SELECT * FROM users WHERE mobile = ? LIMIT 1', [mobile]);
+      const existing = existingRows[0];
+      if (existing.role === 'owner' || existing.is_property_owner) {
+        return fail(res, 'This mobile number is already registered as a property owner.', 422);
+      }
+
+      const hashed = await hashPassword(password);
+      await pool.query(
+        `UPDATE users SET name = ?, email = ?, password = ?, is_property_owner = 1, updated_at = NOW() WHERE id = ?`,
+        [name, email ?? existing.email, hashed, existing.id]
+      );
+      await revokeAllTokens(existing.id);
+      const [userRows] = await pool.query('SELECT * FROM users WHERE id = ? LIMIT 1', [existing.id]);
+      const user = userRows[0];
+      const token = await createToken(user.id);
+
+      return ok(
+        res,
+        { user: await enrichUser(user), token },
+        'Owner access enabled on your existing account.'
+      );
     }
     if (email && !(await uniqueEmail(email))) {
       return fail(res, 'Email already registered.', 422);
@@ -70,8 +90,8 @@ router.post('/owner/register', async (req, res) => {
 
     const hashed = await hashPassword(password);
     const [result] = await pool.query(
-      `INSERT INTO users (name, mobile, email, password, role, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'owner', 1, NOW(), NOW())`,
+      `INSERT INTO users (name, mobile, email, password, role, is_property_owner, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'owner', 1, 1, NOW(), NOW())`,
       [name, mobile, email ?? null, hashed]
     );
 
@@ -81,7 +101,7 @@ router.post('/owner/register', async (req, res) => {
 
     return ok(
       res,
-      { user: formatUser(user), token },
+      { user: await enrichUser(user), token },
       'Owner registered successfully.',
       201
     );
@@ -202,7 +222,7 @@ router.post('/login', async (req, res) => {
     await revokeAllTokens(user.id);
     const token = await createToken(user.id);
 
-    return ok(res, { user: formatUser(user), token }, 'Login successful.');
+    return ok(res, { user: await enrichUser(user), token }, 'Login successful.');
   } catch (err) {
     console.error(err);
     return fail(res, 'Login failed.', 500);
@@ -247,9 +267,9 @@ router.post('/forgot-password', async (req, res) => {
 router.get('/me', authenticate, async (req, res) => {
   try {
     const user = req.user;
-    const data = { user: formatUser(user) };
+    const data = { user: await enrichUser(user) };
 
-    if (user.role === 'tenant') {
+    if (data.user.can_access_tenant) {
       const [assignmentRows] = await pool.query(
         `SELECT pt.property_id,
            p.id, p.owner_id, p.property_code, p.name, p.address, p.city, p.state,
@@ -288,18 +308,36 @@ router.get('/me', authenticate, async (req, res) => {
       }
     }
 
-    if (user.role === 'owner') {
-      const [[{ count }]] = await pool.query(
-        'SELECT COUNT(*) AS count FROM properties WHERE owner_id = ?',
-        [user.id]
-      );
-      data.properties_count = Number(count);
-    }
-
     return ok(res, data);
   } catch (err) {
     console.error(err);
     return fail(res, 'Failed to load profile.', 500);
+  }
+});
+
+router.post('/become-owner', authenticate, async (req, res) => {
+  try {
+    const user = req.user;
+    if (user.role === 'master') {
+      return fail(res, 'Master accounts cannot use owner mode in the app.', 422);
+    }
+    if (user.role === 'owner' || user.is_property_owner) {
+      return ok(res, { user: await enrichUser(user) }, 'You already have owner access.');
+    }
+
+    await pool.query('UPDATE users SET is_property_owner = 1, updated_at = NOW() WHERE id = ?', [
+      user.id,
+    ]);
+    const [rows] = await pool.query('SELECT * FROM users WHERE id = ? LIMIT 1', [user.id]);
+
+    return ok(
+      res,
+      { user: await enrichUser(rows[0]) },
+      'Owner access enabled. You can add meters and properties now.'
+    );
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to enable owner access.', 500);
   }
 });
 

@@ -1,5 +1,6 @@
 const { findUserByBearer } = require('../utils/sanctum');
 const { fail } = require('../utils/response');
+const { activeTenantAssignment } = require('../helpers/userHelpers');
 
 async function authenticate(req, res, next) {
   try {
@@ -22,4 +23,27 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { authenticate, requireRole };
+function requireOwnerAccess(req, res, next) {
+  if (!req.user) return fail(res, 'Unauthenticated.', 401);
+  if (req.user.role === 'owner' || !!req.user.is_property_owner) {
+    return next();
+  }
+  return fail(res, 'Only property owners can access this resource.', 403);
+}
+
+async function requireTenantAccess(req, res, next) {
+  if (!req.user) return fail(res, 'Unauthenticated.', 401);
+  if (req.user.role === 'master') {
+    return fail(res, 'Only tenants can access this resource.', 403);
+  }
+  if (req.user.role === 'tenant') {
+    return next();
+  }
+  const assignment = await activeTenantAssignment(req.user.id);
+  if (assignment) {
+    return next();
+  }
+  return fail(res, 'Only tenants can access this resource.', 403);
+}
+
+module.exports = { authenticate, requireRole, requireOwnerAccess, requireTenantAccess };

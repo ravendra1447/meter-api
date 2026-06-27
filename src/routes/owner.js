@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const pool = require('../config/database');
 const env = require('../config/env');
 const { ok, fail, paginate } = require('../utils/response');
-const { authenticate, requireRole } = require('../middleware/auth');
+const { authenticate, requireOwnerAccess } = require('../middleware/auth');
 const {
   generatePropertyCode,
   mobileRegex,
@@ -19,7 +19,7 @@ const paymentMethods = require('../utils/paymentMethods');
 
 const router = express.Router();
 
-router.use(authenticate, requireRole('owner'));
+router.use(authenticate, requireOwnerAccess);
 
 const SALT_ROUNDS = 10;
 
@@ -53,17 +53,34 @@ async function loadOwnerProperty(propertyId, ownerId) {
 
 async function loadOwnerMeter(meterId, ownerId) {
   const [rows] = await pool.query(
-    `SELECT em.*, p.owner_id
+    `SELECT em.*, p.owner_id AS property_owner_id, p.name AS property_name, p.property_code
      FROM electricity_meters em
-     INNER JOIN properties p ON p.id = em.property_id
+     LEFT JOIN properties p ON p.id = em.property_id
      WHERE em.id = ?
      LIMIT 1`,
     [meterId]
   );
   const meter = rows[0] ?? null;
   if (!meter) return null;
-  if (meter.owner_id !== ownerId) return { forbidden: true };
+  const ownsMeter = Number(meter.owner_id) === Number(ownerId);
+  const ownsProperty =
+    meter.property_owner_id && Number(meter.property_owner_id) === Number(ownerId);
+  if (!ownsMeter && !ownsProperty) return { forbidden: true };
   return meter;
+}
+
+async function assignMetersToProperty(ownerId, propertyId, meterIds = []) {
+  if (!Array.isArray(meterIds) || !meterIds.length) return 0;
+  const placeholders = meterIds.map(() => '?').join(',');
+  const [result] = await pool.query(
+    `UPDATE electricity_meters
+     SET property_id = ?, updated_at = NOW()
+     WHERE id IN (${placeholders})
+       AND owner_id = ?
+       AND (property_id IS NULL OR property_id = ?)`,
+    [propertyId, ...meterIds, ownerId, propertyId]
+  );
+  return result.affectedRows ?? 0;
 }
 
 async function resolveSmartMeter(electricityMeter) {
@@ -815,6 +832,7 @@ router.post('/properties', async (req, res) => {
       water_charges,
       security_deposit_amount,
       status,
+      meter_ids,
     } = req.body;
 
     if (!name || !address) {
@@ -849,10 +867,31 @@ router.post('/properties', async (req, res) => {
       result.insertId,
     ]);
 
+    await assignMetersToProperty(req.user.id, result.insertId, meter_ids);
+
+    const [propertyRows] = await pool.query(
+      `SELECT p.*,
+         (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', em.id, 'meter_name', em.meter_name, 'meter_number', em.meter_number))
+          FROM electricity_meters em WHERE em.property_id = p.id) AS electricity_meters_json
+       FROM properties p WHERE p.id = ? LIMIT 1`,
+      [result.insertId]
+    );
+
+    const property = propertyRows[0] ?? rows[0];
+    const [meters] = await pool.query(
+      'SELECT * FROM electricity_meters WHERE property_id = ? ORDER BY id DESC',
+      [result.insertId]
+    );
+    property.electricity_meters = meters;
+
+    const linked = Array.isArray(meter_ids) ? meter_ids.length : 0;
+
     return ok(
       res,
-      rows[0],
-      'Property created successfully. Share the property code with your tenant.',
+      property,
+      linked > 0
+        ? 'Property created and meters linked successfully.'
+        : 'Property created successfully. Share the property code with your tenant.',
       201
     );
   } catch (err) {
@@ -1007,6 +1046,124 @@ router.get('/properties/:property/tenants', async (req, res) => {
 
 // ── Electricity Meters ────────────────────────────────────────────────────────
 
+router.get('/meters', async (req, res) => {
+  try {
+    let sql = `SELECT em.*, p.id AS linked_property_id, p.name AS linked_property_name, p.property_code AS linked_property_code
+               FROM electricity_meters em
+               LEFT JOIN properties p ON p.id = em.property_id
+               WHERE em.owner_id = ?`;
+    const params = [req.user.id];
+    if (req.query.unassigned === '1' || req.query.unassigned === 'true') {
+      sql += ' AND em.property_id IS NULL';
+    }
+    sql += ' ORDER BY em.id DESC';
+    const [meters] = await pool.query(sql, params);
+    const data = meters.map((m) => ({
+      ...m,
+      property: m.linked_property_id
+        ? {
+            id: m.linked_property_id,
+            name: m.linked_property_name,
+            property_code: m.linked_property_code,
+          }
+        : null,
+    }));
+    return ok(res, data);
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to load meters.', 500);
+  }
+});
+
+router.post('/meters', async (req, res) => {
+  try {
+    const {
+      meter_name,
+      meter_number,
+      model_number,
+      series_number,
+      meter_type,
+      initial_balance,
+      current_balance,
+      tariff_per_unit,
+      last_reading,
+      status,
+      bluetooth_mac,
+      smart_meter_id,
+    } = req.body;
+
+    if (!meter_name || !meter_number || !model_number || !series_number || !meter_type) {
+      return fail(
+        res,
+        'meter_name, meter_number, model_number, series_number, and meter_type are required.',
+        422
+      );
+    }
+
+    const [dupNumber] = await pool.query(
+      'SELECT id FROM electricity_meters WHERE meter_number = ? LIMIT 1',
+      [meter_number]
+    );
+    if (dupNumber.length) {
+      return fail(res, 'Meter number already exists.', 422);
+    }
+
+    const [dupSeries] = await pool.query(
+      'SELECT id FROM electricity_meters WHERE series_number = ? LIMIT 1',
+      [series_number]
+    );
+    if (dupSeries.length) {
+      return fail(res, 'Series number already exists.', 422);
+    }
+
+    const balance = current_balance ?? initial_balance ?? 0;
+
+    const [result] = await pool.query(
+      `INSERT INTO electricity_meters
+        (owner_id, property_id, meter_name, meter_number, model_number, series_number, meter_type,
+         initial_balance, current_balance, tariff_per_unit, last_reading, status, created_at, updated_at)
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [
+        req.user.id,
+        meter_name,
+        meter_number,
+        model_number,
+        series_number,
+        meter_type,
+        initial_balance ?? 0,
+        balance,
+        tariff_per_unit ?? 0,
+        last_reading ?? null,
+        status ?? 'active',
+      ]
+    );
+
+    const [rows] = await pool.query('SELECT * FROM electricity_meters WHERE id = ? LIMIT 1', [
+      result.insertId,
+    ]);
+    const meter = rows[0];
+
+    if (smart_meter_id) {
+      await pool.query('UPDATE meters SET meter_number = ? WHERE id = ?', [
+        meter_number,
+        smart_meter_id,
+      ]);
+    } else if (bluetooth_mac) {
+      await pool.query(
+        `INSERT INTO meters (meter_number, bluetooth_mac, tariff, relay_status, status, created_at, updated_at)
+         VALUES (?, ?, ?, 'ON', 'active', NOW(), NOW())
+         ON DUPLICATE KEY UPDATE bluetooth_mac = VALUES(bluetooth_mac), updated_at = NOW()`,
+        [meter_number, bluetooth_mac, tariff_per_unit ?? 8]
+      );
+    }
+
+    return ok(res, meter, 'Meter registered. Link it to a property when you add one.', 201);
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to add meter.', 500);
+  }
+});
+
 router.get('/properties/:property/meters', async (req, res) => {
   try {
     const property = await loadOwnerProperty(req.params.property, req.user.id);
@@ -1076,11 +1233,13 @@ router.post('/properties/:property/meters', async (req, res) => {
 
     const [result] = await pool.query(
       `INSERT INTO electricity_meters
-        (property_id, meter_name, meter_number, model_number, series_number, meter_type,
-         initial_balance, current_balance, tariff_per_unit, last_reading, status, created_at, updated_at,
-         latitude, longitude, installation_date, first_scan_date, scan_count, last_scan_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?, ?, ?, NOW(), 1, NOW())`,
+
+        (owner_id, property_id, meter_name, meter_number, model_number, series_number, meter_type,
+         initial_balance, current_balance, tariff_per_unit, last_reading, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+
       [
+        req.user.id,
         property.id,
         meter_name,
         meter_number,
