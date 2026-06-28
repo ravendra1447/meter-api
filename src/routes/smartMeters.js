@@ -9,7 +9,7 @@ const router = express.Router();
 router.get('/', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT id, meter_number, bluetooth_mac, meter_address, relay_status, tariff
+      `SELECT id, meter_number, bluetooth_mac, meter_address, relay_status, tariff, next_cutoff_date, pending_schedule_sync
        FROM meters
        WHERE status = 'active'
        ORDER BY meter_number ASC`
@@ -163,6 +163,22 @@ router.patch('/:meter/relay', async (req, res, next) => {
     return res.json({
       success: true,
       relay_status: meter.relay_status,
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/:meterId/sync-schedule', async (req, res, next) => {
+  try {
+    const [rows] = await pool.query('SELECT id, pending_schedule_sync FROM meters WHERE id = ? LIMIT 1', [req.params.meterId]);
+    if (!rows.length) return fail(res, 'Meter not found.', 404);
+
+    await pool.query('UPDATE meters SET pending_schedule_sync = false, updated_at = NOW() WHERE id = ?', [req.params.meterId]);
+
+    return res.json({
+      success: true,
+      message: 'Schedule sync confirmed successfully',
     });
   } catch (e) {
     next(e);

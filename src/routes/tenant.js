@@ -261,6 +261,12 @@ router.post('/payments', async (req, res) => {
         'UPDATE electricity_meters SET current_balance = ?, grace_period_ends_at = NULL, next_billing_date = DATE_ADD(COALESCE(next_billing_date, CURRENT_DATE()), INTERVAL 1 MONTH), updated_at = NOW() WHERE id = ?',
         [newBalance, meter.id]
       );
+
+      // Also update the physical smart meter (meters table) for offline scheduling and turn relay ON
+      await conn.query(
+        "UPDATE meters SET next_cutoff_date = DATE_ADD(COALESCE(next_cutoff_date, CURRENT_DATE()), INTERVAL 1 MONTH), pending_schedule_sync = true, pending_relay_action = 'ON', updated_at = NOW() WHERE meter_number = ?",
+        [meter.meter_number]
+      );
     }
 
     let remaining = payAmount;
