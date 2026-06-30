@@ -54,6 +54,7 @@ router.get('/dashboard', async (req, res) => {
 
     let relayStatus = balance > 50 ? 'ON' : 'OFF';
     let smartMeterId = null;
+    let relaySchedule = null;
 
     if (meter) {
       const [smartRows] = await pool.query(
@@ -63,6 +64,24 @@ router.get('/dashboard', async (req, res) => {
       if (smartRows.length) {
         relayStatus = smartRows[0].relay_status;
         smartMeterId = smartRows[0].id;
+      }
+
+      const [scheduleRows] = await pool.query(
+        'SELECT billing FROM meter_billing_schedules WHERE meter_id = ? AND status = "active" ORDER BY id DESC LIMIT 1',
+        [meter.id]
+      );
+      if (scheduleRows.length && scheduleRows[0].billing) {
+        const billing = typeof scheduleRows[0].billing === 'string' ? JSON.parse(scheduleRows[0].billing) : scheduleRows[0].billing;
+        if (billing.relay_schedule_type && billing.relay_schedule_type !== 'none') {
+           relaySchedule = {
+             type: billing.relay_schedule_type,
+             day: billing.relay_schedule_day,
+             off_time: billing.relay_off_time,
+             on_time: billing.relay_on_time,
+             off_date: billing.relay_off_date,
+             on_date: billing.relay_on_date,
+           };
+        }
       }
     }
 
@@ -80,6 +99,7 @@ router.get('/dashboard', async (req, res) => {
       month_usage_kwh: monthUsage,
       month_usage_percent: usagePercent,
       relay_status: relayStatus,
+      relay_schedule: relaySchedule,
       pre_trip_alarm: balance > 0 && balance < 100,
       meter,
       smart_meter_id: smartMeterId,
