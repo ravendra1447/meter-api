@@ -101,6 +101,17 @@ router.get('/dashboard', async (req, res) => {
       relay_status: relayStatus,
       relay_schedule: relaySchedule,
       pre_trip_alarm: balance > 0 && balance < 100,
+      meter_dlt_protocol: {
+        diTotalEnergy: '00000000',
+        diVoltageA: '02010100',
+        diCurrentA: '02020100',
+        diRelayStatus: '04000501',
+        diRelayStatusAlt: '04000503',
+        diRelayControl: '04008001',
+        diCutoffSchedule: '04001101',
+        diCurrentDateTime: '0400010C',
+        diPreTripAlarm: '04001401'
+      },
       meter,
       smart_meter_id: smartMeterId,
       bill: statement
