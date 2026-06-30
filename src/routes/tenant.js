@@ -109,7 +109,7 @@ router.get('/dashboard', async (req, res) => {
         diRelayStatusAlt: '04000503',
         diRelayControl: '04008001',
         diCutoffSchedule: '04001101',
-        diCurrentDateTime: '0400010C',
+        diCurrentDateTime: '00010000',
         diPreTripAlarm: '04001401'
       },
       meter,
