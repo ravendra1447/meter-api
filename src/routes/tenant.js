@@ -67,7 +67,7 @@ router.get('/dashboard', async (req, res) => {
       }
 
       const [scheduleRows] = await pool.query(
-        'SELECT billing FROM meter_billing_schedules WHERE meter_id = ? AND status = "active" ORDER BY id DESC LIMIT 1',
+        "SELECT billing FROM meter_billing_schedules WHERE electricity_meter_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1",
         [meter.id]
       );
       if (scheduleRows.length && scheduleRows[0].billing) {
