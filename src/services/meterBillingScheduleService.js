@@ -256,6 +256,31 @@ async function create(ownerId, data) {
     ]
   );
 
+  // Sync to schedules table if there's a relay schedule
+  if (data.billing && smartMeterId) {
+    const b = data.billing;
+    if (b.relay_schedule_type && b.relay_schedule_type !== 'none') {
+      let scheduleTime = null;
+      if (b.relay_schedule_type === 'once' && b.relay_off_date && b.relay_off_time) {
+        scheduleTime = `${b.relay_off_date} ${b.relay_off_time}:00`;
+      } else if (b.relay_schedule_type === 'daily' && b.relay_off_time) {
+        const today = new Date().toISOString().split('T')[0];
+        scheduleTime = `${today} ${b.relay_off_time}:00`;
+      } else if (b.relay_off_time) {
+        const today = new Date().toISOString().split('T')[0];
+        scheduleTime = `${today} ${b.relay_off_time}:00`;
+      }
+
+      if (scheduleTime) {
+        await pool.query(
+          `INSERT INTO schedules (meter_id, action, di_code, schedule_time, repeat_type, is_active, created_at)
+           VALUES (?, 'OFF', NULL, ?, ?, 1, NOW())`,
+          [smartMeterId, scheduleTime, b.relay_schedule_type.toUpperCase()]
+        );
+      }
+    }
+  }
+
   return loadSchedule(result.insertId);
 }
 
@@ -335,6 +360,31 @@ async function update(schedule, ownerId, data) {
       'UPDATE meter_billing_schedules SET next_run = ?, updated_at = NOW() WHERE id = ?',
       [nextRun, schedule.id]
     );
+  }
+
+  // Sync to schedules table if there's a relay schedule update
+  if (data.billing && schedule.smart_meter_id) {
+    const b = data.billing;
+    if (b.relay_schedule_type && b.relay_schedule_type !== 'none') {
+      let scheduleTime = null;
+      if (b.relay_schedule_type === 'once' && b.relay_off_date && b.relay_off_time) {
+        scheduleTime = `${b.relay_off_date} ${b.relay_off_time}:00`;
+      } else if (b.relay_schedule_type === 'daily' && b.relay_off_time) {
+        const today = new Date().toISOString().split('T')[0];
+        scheduleTime = `${today} ${b.relay_off_time}:00`;
+      } else if (b.relay_off_time) {
+        const today = new Date().toISOString().split('T')[0];
+        scheduleTime = `${today} ${b.relay_off_time}:00`;
+      }
+
+      if (scheduleTime) {
+        await pool.query(
+          `INSERT INTO schedules (meter_id, action, di_code, schedule_time, repeat_type, is_active, created_at)
+           VALUES (?, 'OFF', NULL, ?, ?, 1, NOW())`,
+          [schedule.smart_meter_id, scheduleTime, b.relay_schedule_type.toUpperCase()]
+        );
+      }
+    }
   }
 
   return loadSchedule(schedule.id);

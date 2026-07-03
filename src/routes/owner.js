@@ -833,6 +833,13 @@ router.post('/properties', async (req, res) => {
       security_deposit_amount,
       status,
       meter_ids,
+      floor,
+      rooms,
+      parking_charges,
+      electricity_tariff,
+      contract_start,
+      contract_end,
+      payment_cycle,
     } = req.body;
 
     if (!name || !address) {
@@ -845,8 +852,8 @@ router.post('/properties', async (req, res) => {
       `INSERT INTO properties
         (owner_id, property_code, name, address, city, state, pincode,
          monthly_rent, maintenance_charges, water_charges, security_deposit_amount,
-         status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+         status, floor, rooms, parking_charges, electricity_tariff, contract_start, contract_end, payment_cycle, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         req.user.id,
         propertyCode,
@@ -855,11 +862,18 @@ router.post('/properties', async (req, res) => {
         city ?? null,
         state ?? null,
         pincode ?? null,
-        monthly_rent ?? 0,
-        maintenance_charges ?? 0,
-        water_charges ?? 0,
-        security_deposit_amount ?? 0,
-        status ?? 'active',
+        monthly_rent || 0,
+        maintenance_charges || 0,
+        water_charges || 0,
+        security_deposit_amount || 0,
+        status || 'active',
+        floor || null,
+        rooms || null,
+        parking_charges || 0,
+        electricity_tariff || 0,
+        contract_start || null,
+        contract_end || null,
+        payment_cycle || '1 Month',
       ]
     );
 
