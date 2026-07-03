@@ -155,8 +155,26 @@ async function registerByMac(mac, meterNumber = null, tariff = null, locationDat
       installation_date,
     ]
   );
+  
+  const meterId = result.insertId;
 
-  const [rows] = await pool.query('SELECT * FROM meters WHERE id = ? LIMIT 1', [result.insertId]);
+  // Insert location log
+  if (latitude || longitude) {
+    await pool.query(
+      `INSERT INTO location_logs (meter_id, latitude, longitude, accuracy, scan_date, created_at)
+       VALUES (?, ?, ?, NULL, NOW(), NOW())`,
+      [meterId, latitude, longitude]
+    );
+  }
+
+  // Insert installation log
+  await pool.query(
+    `INSERT INTO installation_logs (meter_id, installed_by, installation_date, notes, created_at)
+     VALUES (?, NULL, COALESCE(?, NOW()), 'Meter registered via API', NOW())`,
+    [meterId, installation_date]
+  );
+
+  const [rows] = await pool.query('SELECT * FROM meters WHERE id = ? LIMIT 1', [meterId]);
   return rows[0];
 }
 
@@ -164,6 +182,18 @@ async function syncRelay(meter, relayStatus) {
   await pool.query(
     'UPDATE meters SET relay_status = ?, updated_at = NOW() WHERE id = ?',
     [relayStatus, meter.id]
+  );
+
+  await pool.query(
+    `INSERT INTO relay_logs (meter_id, action, command_hex, response_hex, status, action_time, created_at)
+     VALUES (?, ?, NULL, NULL, 'SUCCESS', NOW(), NOW())`,
+    [meter.id, relayStatus]
+  );
+
+  await pool.query(
+    `INSERT INTO event_logs (meter_id, event_type, message, created_at)
+     VALUES (?, ?, ?, NOW())`,
+    [meter.id, 'RELAY_TOGGLE', `Relay was manually synced to ${relayStatus} via API`]
   );
 
   const [rows] = await pool.query('SELECT * FROM meters WHERE id = ? LIMIT 1', [meter.id]);

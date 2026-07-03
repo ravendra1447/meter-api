@@ -232,6 +232,7 @@ router.get('/usage', async (req, res) => {
         total_cost: Math.round(totalCost * 100) / 100,
         avg_daily_kwh: avgDaily,
         comparison_pct: 12.4,
+        current_reading: smartMeter ? Number(smartMeter.current_reading) : 0,
       },
       consumptions,
     });
@@ -530,7 +531,11 @@ router.get('/meters', async (req, res) => {
     }
 
     const [meters] = await pool.query(
-      'SELECT * FROM electricity_meters WHERE property_id = ? ORDER BY id DESC',
+      `SELECT em.*, m.current_reading 
+       FROM electricity_meters em 
+       LEFT JOIN meters m ON em.meter_number = m.meter_number 
+       WHERE em.property_id = ? 
+       ORDER BY em.id DESC`,
       [assignment.property_id]
     );
 

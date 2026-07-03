@@ -185,4 +185,120 @@ router.post('/:meterId/sync-schedule', async (req, res, next) => {
   }
 });
 
+router.post('/:meterId/log-packet', async (req, res, next) => {
+  try {
+    const { request_hex, response_hex, command_type, di_code, status, parsed, direction, frame, parsed_data } = req.body;
+    const meterId = req.params.meterId;
+    
+    // Log to raw_packets
+    await pool.query(
+      `INSERT INTO raw_packets (meter_id, request_hex, response_hex, parsed, created_at)
+       VALUES (?, ?, ?, ?, NOW())`,
+      [meterId, request_hex, response_hex, parsed ? 1 : 0]
+    );
+
+    // Log to meter_commands if it's a specific command type
+    if (command_type) {
+      await pool.query(
+        `INSERT INTO meter_commands (meter_id, command_type, di_code, request_hex, response_hex, status, retry_count, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 0, NOW())`,
+        [meterId, command_type, di_code || null, request_hex, response_hex, status || 'COMPLETED']
+      );
+    }
+    
+    // Log to dl645_logs
+    if (frame || parsed_data) {
+      await pool.query(
+        `INSERT INTO dl645_logs (meter_id, direction, frame, parsed_data, created_at)
+         VALUES (?, ?, ?, ?, NOW())`,
+        [meterId, direction || 'TX', frame || request_hex || response_hex, parsed_data ? JSON.stringify(parsed_data) : null]
+      );
+    }
+
+    return res.json({ success: true });
+  } catch (e) {
+    console.error('Failed to log packet:', e);
+    return res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/:meterId/load-profile', async (req, res, next) => {
+  try {
+    const meterId = req.params.meterId;
+    const { di_code, value, record_date } = req.body;
+    
+    if (!di_code || value === undefined) {
+      return fail(res, 'di_code and value are required', 422);
+    }
+
+    await pool.query(
+      `INSERT INTO load_profiles (meter_id, di_code, value, record_date, created_at)
+       VALUES (?, ?, ?, COALESCE(?, CURDATE()), NOW())`,
+      [meterId, di_code, value, record_date || null]
+    );
+
+    return res.json({ success: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/:meterId/schedule', async (req, res, next) => {
+  try {
+    const meterId = req.params.meterId;
+    const { action, di_code, schedule_time, repeat_type, is_active } = req.body;
+    
+    if (!action || !schedule_time) {
+      return fail(res, 'action and schedule_time are required', 422);
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO schedules (meter_id, action, di_code, schedule_time, repeat_type, is_active, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+      [meterId, action, di_code || null, schedule_time, repeat_type || 'NONE', is_active !== false]
+    );
+
+    const [rows] = await pool.query('SELECT * FROM schedules WHERE id = ? LIMIT 1', [result.insertId]);
+    return res.json({ success: true, schedule: rows[0] });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/:meterId/config', async (req, res, next) => {
+  try {
+    const meterId = req.params.meterId;
+    const [rows] = await pool.query('SELECT param_key, param_value FROM meter_config WHERE meter_id = ?', [meterId]);
+    const config = {};
+    for (const row of rows) {
+      config[row.param_key] = row.param_value;
+    }
+    return res.json({ success: true, config });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/:meterId/config', async (req, res, next) => {
+  try {
+    const meterId = req.params.meterId;
+    const { param_key, param_value } = req.body;
+    
+    if (!param_key) {
+      return fail(res, 'param_key is required', 422);
+    }
+
+    await pool.query(
+      `INSERT INTO meter_config (meter_id, param_key, param_value, updated_at)
+       VALUES (?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE param_value = VALUES(param_value), updated_at = NOW()`,
+      [meterId, param_key, param_value]
+    );
+
+    return res.json({ success: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
 module.exports = router;

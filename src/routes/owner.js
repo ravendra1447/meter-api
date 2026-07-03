@@ -879,7 +879,11 @@ router.post('/properties', async (req, res) => {
 
     const property = propertyRows[0] ?? rows[0];
     const [meters] = await pool.query(
-      'SELECT * FROM electricity_meters WHERE property_id = ? ORDER BY id DESC',
+      `SELECT em.*, m.current_reading 
+       FROM electricity_meters em 
+       LEFT JOIN meters m ON em.meter_number = m.meter_number 
+       WHERE em.property_id = ? 
+       ORDER BY em.id DESC`,
       [result.insertId]
     );
     property.electricity_meters = meters;
@@ -918,9 +922,36 @@ router.get('/properties/:property', async (req, res) => {
     );
 
     const [meters] = await pool.query(
-      'SELECT * FROM electricity_meters WHERE property_id = ? ORDER BY id DESC',
+      `SELECT em.*, m.current_reading 
+       FROM electricity_meters em 
+       LEFT JOIN meters m ON em.meter_number = m.meter_number 
+       WHERE em.property_id = ? 
+       ORDER BY em.id DESC`,
       [property.id]
     );
+
+    // Fetch dynamic rent due date from schedules
+    let rentDueDate = property.rent_due_date || '7th of Every Month';
+    const [scheduleRows] = await pool.query(
+      `SELECT s.schedule_time 
+       FROM schedules s 
+       JOIN electricity_meters em ON s.meter_id = em.meter_number OR s.meter_id = em.id
+       WHERE em.property_id = ? AND s.is_active = 1
+       ORDER BY s.id DESC LIMIT 1`,
+      [property.id]
+    );
+
+    if (scheduleRows.length > 0 && scheduleRows[0].schedule_time) {
+      // Assuming schedule_time is a string or Date object. We convert it to a string showing date and time.
+      const d = new Date(scheduleRows[0].schedule_time);
+      if (!isNaN(d.getTime())) {
+        // Format to YYYY-MM-DD HH:mm
+        const pad = (n) => n.toString().padStart(2, '0');
+        rentDueDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      } else {
+        rentDueDate = scheduleRows[0].schedule_time.toString();
+      }
+    }
 
     const activeTenants = tenants.map((t) => ({
       ...t,
@@ -934,6 +965,7 @@ router.get('/properties/:property', async (req, res) => {
 
     return ok(res, {
       ...property,
+      rent_due_date: rentDueDate,
       active_tenants: activeTenants,
       electricity_meters: meters,
     });
@@ -2562,6 +2594,39 @@ router.delete('/other-active-charges/:otherActiveCharge', async (req, res) => {
   } catch (err) {
     console.error(err);
     return fail(res, 'Failed to delete other active charge.', 500);
+  }
+});
+
+// ========== TARIFF PLANS ==========
+
+router.get('/tariff-plans', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM tariff_plans ORDER BY created_at DESC');
+    return ok(res, rows);
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to fetch tariff plans.', 500);
+  }
+});
+
+router.post('/tariff-plans', async (req, res) => {
+  try {
+    const { name, rate_per_unit, fixed_charge } = req.body;
+    if (!name || rate_per_unit == null) {
+      return fail(res, 'Name and rate_per_unit are required.', 422);
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO tariff_plans (name, rate_per_unit, fixed_charge, created_at)
+       VALUES (?, ?, ?, NOW())`,
+      [name, rate_per_unit, fixed_charge || 0]
+    );
+
+    const [rows] = await pool.query('SELECT * FROM tariff_plans WHERE id = ? LIMIT 1', [result.insertId]);
+    return ok(res, rows[0], 'Tariff plan created successfully.', 201);
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to create tariff plan.', 500);
   }
 });
 

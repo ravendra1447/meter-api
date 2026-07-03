@@ -79,6 +79,26 @@ async function saveReading(
       [meterId, today, totalReading, dailyConsumption, voltage, current]
     );
 
+    // Track real-time telemetry
+    if (voltage !== null || current !== null) {
+      const p = (voltage && current) ? round2(voltage * current) : 0;
+      await conn.query(
+        `INSERT INTO instantaneous_data
+          (meter_id, voltage, current, power, frequency, recorded_at, created_at)
+         VALUES (?, ?, ?, ?, 50.0, NOW(), NOW())`,
+        [meterId, voltage, current, p]
+      );
+    }
+
+    // Keep an active running consumption record
+    const billAmount = round2(Math.max(0, monthlyUsage) * Number(meter.tariff));
+    await conn.query(
+      `INSERT INTO electricity_consumptions
+        (property_id, meter_id, previous_reading, current_reading, total_consumed_units, tariff_per_unit, total_amount, calculation_date, created_at, updated_at)
+       VALUES (NULL, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
+      [meterId, meter.month_start_reading, totalReading, Math.max(0, monthlyUsage), meter.tariff, billAmount]
+    );
+
     const meterUpdates = ['current_reading = ?', 'monthly_usage = ?', 'updated_at = NOW()'];
     const meterValues = [totalReading, Math.max(0, monthlyUsage)];
 
