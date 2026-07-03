@@ -29,11 +29,11 @@ async function saveReading(
   try {
     await conn.beginTransaction();
 
-    // FIX: Get meter with property_id
+    // FIX: Get meter with property_id via electricity_meters
     const [meters] = await conn.query(
-      `SELECT m.*, p.id as property_id 
+      `SELECT m.*, em.property_id 
        FROM meters m 
-       LEFT JOIN properties p ON m.property_id = p.id 
+       LEFT JOIN electricity_meters em ON m.meter_number = em.meter_number 
        WHERE m.id = ? FOR UPDATE`,
       [meterId]
     );
