@@ -54,6 +54,7 @@ router.get('/dashboard', async (req, res) => {
 
     let relayStatus = balance > 50 ? 'ON' : 'OFF';
     let smartMeterId = null;
+    let relaySchedule = null;
 
     if (meter) {
       const [smartRows] = await pool.query(
@@ -63,6 +64,24 @@ router.get('/dashboard', async (req, res) => {
       if (smartRows.length) {
         relayStatus = smartRows[0].relay_status;
         smartMeterId = smartRows[0].id;
+      }
+
+      const [scheduleRows] = await pool.query(
+        "SELECT billing FROM meter_billing_schedules WHERE electricity_meter_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1",
+        [meter.id]
+      );
+      if (scheduleRows.length && scheduleRows[0].billing) {
+        const billing = typeof scheduleRows[0].billing === 'string' ? JSON.parse(scheduleRows[0].billing) : scheduleRows[0].billing;
+        if (billing.relay_schedule_type && billing.relay_schedule_type !== 'none') {
+           relaySchedule = {
+             type: billing.relay_schedule_type,
+             day: billing.relay_schedule_day,
+             off_time: billing.relay_off_time,
+             on_time: billing.relay_on_time,
+             off_date: billing.relay_off_date,
+             on_date: billing.relay_on_date,
+           };
+        }
       }
     }
 
@@ -80,7 +99,19 @@ router.get('/dashboard', async (req, res) => {
       month_usage_kwh: monthUsage,
       month_usage_percent: usagePercent,
       relay_status: relayStatus,
+      relay_schedule: relaySchedule,
       pre_trip_alarm: balance > 0 && balance < 100,
+      meter_dlt_protocol: {
+        diTotalEnergy: '00000000',
+        diVoltageA: '02010100',
+        diCurrentA: '02020100',
+        diRelayStatus: '04000501',
+        diRelayStatusAlt: '04000503',
+        diRelayControl: '04008001',
+        diCutoffSchedule: '04001101',
+        diCurrentDateTime: '00010000',
+        diPreTripAlarm: '04001401'
+      },
       meter,
       smart_meter_id: smartMeterId,
       bill: statement
@@ -201,6 +232,7 @@ router.get('/usage', async (req, res) => {
         total_cost: Math.round(totalCost * 100) / 100,
         avg_daily_kwh: avgDaily,
         comparison_pct: 12.4,
+        current_reading: smartMeter ? Number(smartMeter.current_reading) : 0,
       },
       consumptions,
     });
@@ -499,7 +531,11 @@ router.get('/meters', async (req, res) => {
     }
 
     const [meters] = await pool.query(
-      'SELECT * FROM electricity_meters WHERE property_id = ? ORDER BY id DESC',
+      `SELECT em.*, m.current_reading 
+       FROM electricity_meters em 
+       LEFT JOIN meters m ON em.meter_number = m.meter_number 
+       WHERE em.property_id = ? 
+       ORDER BY em.id DESC`,
       [assignment.property_id]
     );
 

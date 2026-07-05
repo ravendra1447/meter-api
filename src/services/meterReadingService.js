@@ -29,12 +29,25 @@ async function saveReading(
   try {
     await conn.beginTransaction();
 
-    const [meters] = await conn.query('SELECT * FROM meters WHERE id = ? FOR UPDATE', [meterId]);
+    // FIX: Get meter with property_id via electricity_meters
+    const [meters] = await conn.query(
+      `SELECT m.*, em.property_id 
+       FROM meters m 
+       LEFT JOIN electricity_meters em ON m.meter_number = em.meter_number 
+       WHERE m.id = ? FOR UPDATE`,
+      [meterId]
+    );
+
     if (!meters.length) {
       throw httpError(404, 'Meter not found');
     }
 
     let meter = meters[0];
+
+    // FIX: Check if property exists
+    if (meter.property_id === null || meter.property_id === undefined) {
+      throw httpError(400, 'Meter is not associated with any property');
+    }
 
     if (meter.status !== 'active') {
       throw httpError(400, 'Meter is not active.');
@@ -77,6 +90,26 @@ async function saveReading(
         (meter_id, reading_date, total_reading, daily_consumption, voltage, current, created_at)
        VALUES (?, ?, ?, ?, ?, ?, NOW())`,
       [meterId, today, totalReading, dailyConsumption, voltage, current]
+    );
+
+    // Track real-time telemetry
+    if (voltage !== null || current !== null) {
+      const p = (voltage && current) ? round2(voltage * current) : 0;
+      await conn.query(
+        `INSERT INTO instantaneous_data
+          (meter_id, voltage, current, power, frequency, recorded_at, created_at)
+         VALUES (?, ?, ?, ?, 50.0, NOW(), NOW())`,
+        [meterId, voltage, current, p]
+      );
+    }
+
+    // FIX: Use property_id from the joined query instead of NULL
+    const billAmount = round2(Math.max(0, monthlyUsage) * Number(meter.tariff));
+    await conn.query(
+      `INSERT INTO electricity_consumptions
+        (property_id, meter_id, previous_reading, current_reading, total_consumed_units, tariff_per_unit, total_amount, calculation_date, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
+      [meter.property_id, meterId, meter.month_start_reading, totalReading, Math.max(0, monthlyUsage), meter.tariff, billAmount]
     );
 
     const meterUpdates = ['current_reading = ?', 'monthly_usage = ?', 'updated_at = NOW()'];
