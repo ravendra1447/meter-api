@@ -100,6 +100,24 @@ router.get('/:meterId/dashboard', async (req, res, next) => {
   }
 });
 
+router.post('/:meterId/set-cutoff', async (req, res, next) => {
+  try {
+    const { cutoff_date } = req.body;
+    if (!cutoff_date) return fail(res, 'cutoff_date is required', 422);
+    
+    // Format date for MySQL
+    const formattedDate = new Date(cutoff_date).toISOString().slice(0, 19).replace('T', ' ');
+
+    await pool.query(
+      `UPDATE meters SET next_cutoff_date = ?, pending_schedule_sync = true, updated_at = NOW() WHERE id = ?`,
+      [formattedDate, req.params.meterId]
+    );
+    return ok(res, { message: 'Cutoff date updated manually' });
+  } catch (e) {
+    next(e);
+  }
+});
+
 router.get('/:meter/relay-capabilities', async (req, res, next) => {
   try {
     const [rows] = await pool.query('SELECT * FROM meters WHERE id = ? LIMIT 1', [req.params.meter]);
