@@ -107,12 +107,32 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
     
     // Format date for MySQL
     const formattedDate = new Date(cutoff_date).toISOString().slice(0, 19).replace('T', ' ');
+    const timeOnly = formattedDate.split(' ')[1];
 
+    // 1. Check if the ID belongs to electricity_meters
+    const [emRows] = await pool.query('SELECT meter_number FROM electricity_meters WHERE id = ?', [req.params.meterId]);
+    
+    if (emRows.length > 0) {
+      // It's from electricity_meters, update meters table by meter_number
+      await pool.query(
+        `UPDATE meters SET next_cutoff_date = ?, pending_schedule_sync = true, updated_at = NOW() WHERE meter_number = ?`,
+        [formattedDate, emRows[0].meter_number]
+      );
+    } else {
+      // Fallback: update meters table directly by ID
+      await pool.query(
+        `UPDATE meters SET next_cutoff_date = ?, pending_schedule_sync = true, updated_at = NOW() WHERE id = ?`,
+        [formattedDate, req.params.meterId]
+      );
+    }
+
+    // 2. Also save it in meter_relay_schedules as requested
     await pool.query(
-      `UPDATE meters SET next_cutoff_date = ?, pending_schedule_sync = true, updated_at = NOW() WHERE id = ?`,
-      [formattedDate, req.params.meterId]
+      `INSERT INTO meter_relay_schedules (meter_id, action, schedule_time, is_active, created_at, updated_at) VALUES (?, 'OFF', ?, 1, NOW(), NOW())`,
+      [req.params.meterId, timeOnly]
     );
-    return ok(res, { message: 'Cutoff date updated manually' });
+
+    return ok(res, { message: 'Cutoff date updated manually and saved to schedule table' });
   } catch (e) {
     next(e);
   }
