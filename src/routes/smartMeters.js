@@ -105,8 +105,9 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
     const { cutoff_date } = req.body;
     if (!cutoff_date) return fail(res, 'cutoff_date is required', 422);
     
-    // Format date for MySQL
-    const formattedDate = new Date(cutoff_date).toISOString().slice(0, 19).replace('T', ' ');
+    // Fix: Do not use new Date().toISOString() as it converts local time to UTC (-5.5 hours)
+    // Flutter sends '2026-08-05T19:00:00.000', we just need '2026-08-05 19:00:00'
+    const formattedDate = cutoff_date.substring(0, 19).replace('T', ' ');
     const timeOnly = formattedDate.split(' ')[1];
 
     // 1. Check if the ID belongs to electricity_meters
@@ -137,7 +138,7 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
 
     // 2. Also save it in meter_relay_schedules as requested
     await pool.query(
-      `INSERT INTO meter_relay_schedules (meter_id, action, schedule_time, is_active, created_at, updated_at) VALUES (?, 'OFF', ?, 1, NOW(), NOW())`,
+      `INSERT INTO meter_relay_schedules (meter_id, action, schedule_time, is_active, created_at, updated_at) VALUES (?, 'ON', ?, 1, NOW(), NOW())`,
       [actualMeterId, timeOnly]
     );
 
