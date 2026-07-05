@@ -112,24 +112,33 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
     // 1. Check if the ID belongs to electricity_meters
     const [emRows] = await pool.query('SELECT meter_number FROM electricity_meters WHERE id = ?', [req.params.meterId]);
     
+    let actualMeterId = req.params.meterId; // fallback
+
     if (emRows.length > 0) {
-      // It's from electricity_meters, update meters table by meter_number
+      const meterNumber = emRows[0].meter_number;
+      // Update meters table by meter_number
       await pool.query(
         `UPDATE meters SET next_cutoff_date = ?, pending_schedule_sync = true, updated_at = NOW() WHERE meter_number = ?`,
-        [formattedDate, emRows[0].meter_number]
+        [formattedDate, meterNumber]
       );
+
+      // We need the ACTUAL meters.id for meter_relay_schedules foreign key
+      const [mRows] = await pool.query('SELECT id FROM meters WHERE meter_number = ? LIMIT 1', [meterNumber]);
+      if (mRows.length > 0) {
+        actualMeterId = mRows[0].id;
+      }
     } else {
       // Fallback: update meters table directly by ID
       await pool.query(
         `UPDATE meters SET next_cutoff_date = ?, pending_schedule_sync = true, updated_at = NOW() WHERE id = ?`,
-        [formattedDate, req.params.meterId]
+        [formattedDate, actualMeterId]
       );
     }
 
     // 2. Also save it in meter_relay_schedules as requested
     await pool.query(
       `INSERT INTO meter_relay_schedules (meter_id, action, schedule_time, is_active, created_at, updated_at) VALUES (?, 'OFF', ?, 1, NOW(), NOW())`,
-      [req.params.meterId, timeOnly]
+      [actualMeterId, timeOnly]
     );
 
     return ok(res, { message: 'Cutoff date updated manually and saved to schedule table' });
