@@ -184,17 +184,27 @@ async function syncRelay(meter, relayStatus) {
     [relayStatus, meter.id]
   );
 
-  await pool.query(
-    `INSERT INTO relay_logs (meter_id, action, command_hex, response_hex, status, action_time, created_at)
-     VALUES (?, ?, NULL, NULL, 'SUCCESS', NOW(), NOW())`,
-    [meter.id, relayStatus]
+  // Fetch the actual electricity_meters ID to avoid foreign key failures
+  const [emRows] = await pool.query(
+    'SELECT id FROM electricity_meters WHERE meter_number = ? LIMIT 1',
+    [meter.meter_number]
   );
+  
+  if (emRows.length > 0) {
+    const emId = emRows[0].id;
+    
+    await pool.query(
+      `INSERT INTO relay_logs (meter_id, action, command_hex, response_hex, status, action_time, created_at)
+       VALUES (?, ?, NULL, NULL, 'SUCCESS', NOW(), NOW())`,
+      [emId, relayStatus]
+    );
 
-  await pool.query(
-    `INSERT INTO event_logs (meter_id, event_type, message, created_at)
-     VALUES (?, ?, ?, NOW())`,
-    [meter.id, 'RELAY_TOGGLE', `Relay was manually synced to ${relayStatus} via API`]
-  );
+    await pool.query(
+      `INSERT INTO event_logs (meter_id, event_type, message, created_at)
+       VALUES (?, ?, ?, NOW())`,
+      [emId, 'RELAY_TOGGLE', `Relay was manually synced to ${relayStatus} via API`]
+    );
+  }
 
   const [rows] = await pool.query('SELECT * FROM meters WHERE id = ? LIMIT 1', [meter.id]);
   return rows[0];

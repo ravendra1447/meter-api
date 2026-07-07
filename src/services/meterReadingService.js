@@ -31,7 +31,7 @@ async function saveReading(
 
     // FIX: Get meter with property_id via electricity_meters
     const [meters] = await conn.query(
-      `SELECT m.*, em.property_id 
+      `SELECT m.*, em.property_id, em.id AS em_id 
        FROM meters m 
        LEFT JOIN electricity_meters em ON m.meter_number = em.meter_number 
        WHERE m.id = ? FOR UPDATE`,
@@ -93,13 +93,13 @@ async function saveReading(
     );
 
     // Track real-time telemetry
-    if (voltage !== null || current !== null) {
+    if ((voltage !== null || current !== null) && meter.em_id) {
       const p = (voltage && current) ? round2(voltage * current) : 0;
       await conn.query(
         `INSERT INTO instantaneous_data
           (meter_id, voltage, current, power, frequency, recorded_at, created_at)
          VALUES (?, ?, ?, ?, 50.0, NOW(), NOW())`,
-        [meterId, voltage, current, p]
+        [meter.em_id, voltage, current, p]
       );
     }
 
