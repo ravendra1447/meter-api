@@ -46,6 +46,15 @@ router.post('/dynamic-commands/log', async (req, res, next) => {
       [meter_id || 0, mappedType, request_hex, response_hex, status || 'pending']
     );
     
+    console.log(`\n======================================================`);
+    console.log(`🔌 DYNAMIC COMMAND LOG RECEIVED`);
+    console.log(`Meter ID : ${meter_id}`);
+    console.log(`Command  : ${command_name}`);
+    console.log(`Status   : ${status}`);
+    console.log(`Req HEX  : ${request_hex || 'None'}`);
+    console.log(`Res HEX  : ${response_hex || 'None'}`);
+    console.log(`======================================================\n`);
+
     return ok(res, {}, 'Execution logged successfully', 201);
   } catch (e) {
     next(e);
