@@ -5,6 +5,35 @@ const diMasterService = require('../services/diMasterService');
 
 const router = express.Router();
 
+// ========== NEW: DYNAMIC COMMANDS ========== (Public/Unauthenticated)
+
+router.get('/dynamic-commands', async (req, res, next) => {
+  try {
+    const pool = require('../config/database');
+    const [rows] = await pool.query('SELECT * FROM dynamic_meter_commands');
+    return ok(res, rows);
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/dynamic-commands/log', async (req, res, next) => {
+  try {
+    const pool = require('../config/database');
+    const { meter_id, command_name, request_hex, response_hex, status } = req.body;
+    
+    await pool.query(
+      `INSERT INTO meter_commands (meter_id, command_type, di_code, request_hex, response_hex, status, created_at)
+       VALUES (?, ?, 'DYNAMIC', ?, ?, ?, NOW())`,
+      [meter_id || 0, command_name || 'unknown', request_hex, response_hex, status || 'pending']
+    );
+    
+    return ok(res, {}, 'Execution logged successfully', 201);
+  } catch (e) {
+    next(e);
+  }
+});
+
 router.use(authenticate);
 
 router.get('/di-master', async (req, res, next) => {
@@ -106,33 +135,6 @@ router.get('/meter-commands', async (req, res, next) => {
   }
 });
 
-// ========== NEW: DYNAMIC COMMANDS ==========
 
-router.get('/dynamic-commands', async (req, res, next) => {
-  try {
-    const pool = require('../config/database');
-    const [rows] = await pool.query('SELECT * FROM dynamic_meter_commands');
-    return ok(res, rows);
-  } catch (e) {
-    next(e);
-  }
-});
-
-router.post('/dynamic-commands/log', async (req, res, next) => {
-  try {
-    const pool = require('../config/database');
-    const { meter_id, command_name, request_hex, response_hex, status } = req.body;
-    
-    await pool.query(
-      `INSERT INTO meter_commands (meter_id, command_type, di_code, request_hex, response_hex, status, created_at)
-       VALUES (?, ?, 'DYNAMIC', ?, ?, ?, NOW())`,
-      [meter_id || 0, command_name || 'unknown', request_hex, response_hex, status || 'pending']
-    );
-    
-    return ok(res, {}, 'Execution logged successfully', 201);
-  } catch (e) {
-    next(e);
-  }
-});
 
 module.exports = router;
