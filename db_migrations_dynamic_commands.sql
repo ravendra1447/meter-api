@@ -22,7 +22,7 @@ INSERT INTO `dynamic_meter_commands` (`command_name`, `hex_template`, `descripti
 ('relay_control_on', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 1C 10 {{PASSWORD_OPERATOR}} 4E 33 33 33 33 33 33 33 {{CS}} 16', 'Relay ON Command'),
 ('relay_control_off', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 1C 10 {{PASSWORD_OPERATOR}} 4D 33 33 33 33 33 33 33 {{CS}} 16', 'Relay OFF Command'),
 ('relay_trip_schedule', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 1C 10 {{PASSWORD_OPERATOR}} 4D 33 {{SS}} {{MM}} {{HH}} {{DD}} {{MM_MONTH}} {{YY}} {{CS}} 16', 'Schedule Trip Command (Relay Control 1C)'),
-('write_cutoff_schedule', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 14 11 45 33 44 37 {{PASSWORD_OPERATOR}} {{MM}} {{HH}} {{DD}} {{MM_MONTH}} {{YY}} {{CS}} 16', 'Write Cutoff Schedule (Write Data 14)'),
+('write_cutoff_schedule', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 14 12 45 33 44 37 {{PASSWORD_OPERATOR}} {{SS}} {{MM}} {{HH}} {{DD}} {{MM_MONTH}} {{YY}} {{CS}} 16', 'Write Cutoff Schedule (Write Data 14)'),
 ('write_date', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 14 10 34 34 33 37 {{PASSWORD_OPERATOR}} {{WW}} {{DD}} {{MM_MONTH}} {{YY}} {{CS}} 16', 'Write Date to Meter RTC'),
 ('write_time', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 14 0F 35 34 33 37 {{PASSWORD_OPERATOR}} {{SS}} {{MM}} {{HH}} {{CS}} 16', 'Write Time to Meter RTC')
 ON DUPLICATE KEY UPDATE `hex_template` = VALUES(`hex_template`), `description` = VALUES(`description`);
