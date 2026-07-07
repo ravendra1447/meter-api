@@ -21,11 +21,29 @@ router.post('/dynamic-commands/log', async (req, res, next) => {
   try {
     const pool = require('../config/database');
     const { meter_id, command_name, request_hex, response_hex, status } = req.body;
+    let mappedType = command_name || 'unknown';
+    switch (command_name) {
+      case 'enable_schedule':
+      case 'write_cutoff_schedule':
+      case 'write_date':
+      case 'write_time':
+        mappedType = 'WRITE';
+        break;
+
+      case 'relay_control_on':
+      case 'relay_control_off':
+      case 'relay_trip_schedule':
+        mappedType = 'RELAY';
+        break;
+
+      default:
+        mappedType = 'READ';
+    }
     
     await pool.query(
       `INSERT INTO meter_commands (meter_id, command_type, di_code, request_hex, response_hex, status, created_at)
        VALUES (?, ?, 'DYNAMIC', ?, ?, ?, NOW())`,
-      [meter_id || 0, command_name || 'unknown', request_hex, response_hex, status || 'pending']
+      [meter_id || 0, mappedType, request_hex, response_hex, status || 'pending']
     );
     
     return ok(res, {}, 'Execution logged successfully', 201);
