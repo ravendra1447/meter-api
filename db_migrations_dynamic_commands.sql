@@ -19,10 +19,10 @@ INSERT INTO `dynamic_meter_commands` (`command_name`, `hex_template`, `descripti
 ('read_date', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 11 04 34 34 33 37 {{CS}} 16', 'Read Date (DI 04000101)'),
 ('read_time', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 11 04 35 34 33 37 {{CS}} 16', 'Read Time (DI 04000102)'),
 ('enable_schedule', '68 AA AA AA AA AA AA 68 1F 04 46 47 87 B3 {{CS}} 16', 'Enable Schedule Command (Broadcast)'),
-('relay_control_on', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 1C 10 {{PASSWORD_OPERATOR}} 4E 33 33 33 33 33 33 33 {{CS}} 16', 'Relay ON Command'),
-('relay_control_off', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 1C 10 {{PASSWORD_OPERATOR}} 4D 33 33 33 33 33 33 33 {{CS}} 16', 'Relay OFF Command'),
-('relay_trip_schedule', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 1C 10 {{PASSWORD_OPERATOR}} 4D 33 {{SS}} {{MM}} {{HH}} {{DD}} {{MM_MONTH}} {{YY}} {{CS}} 16', 'Schedule Trip Command (Relay Control 1C)'),
-('write_cutoff_schedule', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 14 12 45 33 44 37 {{PASSWORD_OPERATOR}} {{SS}} {{MM}} {{HH}} {{DD}} {{MM_MONTH}} {{YY}} {{CS}} 16', 'Write Cutoff Schedule (Write Data 14)'),
-('write_date', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 14 10 34 34 33 37 {{PASSWORD_OPERATOR}} {{WW}} {{DD}} {{MM_MONTH}} {{YY}} {{CS}} 16', 'Write Date to Meter RTC'),
+('relay_control_on', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 1C 0A 35 33 33 33 33 33 33 33 4E 33 {{CS}} 16', 'Relay ON Command (Length 10 bytes, P2 02)'),
+('relay_control_off', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 1C 0A 35 33 33 33 33 33 33 33 4D 33 {{CS}} 16', 'Relay OFF Command (Length 10 bytes, P2 02)'),
+('relay_trip_schedule', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 1C 10 35 33 33 33 33 33 33 33 4D 33 {{SS}} {{MM}} {{HH}} {{DD}} {{MO}} {{YY}} {{CS}} 16', 'Schedule Trip Command (Relay 1C, Length 10 hex)'),
+('write_cutoff_schedule', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 14 12 45 33 44 37 35 33 33 33 33 33 33 33 {{SS}} {{MM}} {{HH}} {{DD}} {{MO}} {{YY}} {{CS}} 16', 'Write Cutoff Schedule (Write Data 14)'),
+('write_date', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 14 10 34 34 33 37 {{PASSWORD_OPERATOR}} {{WW}} {{DD}} {{MO}} {{YY}} {{CS}} 16', 'Write Date to Meter RTC'),
 ('write_time', '68 {{A0}} {{A1}} {{A2}} {{A3}} {{A4}} {{A5}} 68 14 0F 35 34 33 37 {{PASSWORD_OPERATOR}} {{SS}} {{MM}} {{HH}} {{CS}} 16', 'Write Time to Meter RTC')
 ON DUPLICATE KEY UPDATE `hex_template` = VALUES(`hex_template`), `description` = VALUES(`description`);

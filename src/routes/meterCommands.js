@@ -41,9 +41,10 @@ router.post('/dynamic-commands/log', async (req, res, next) => {
     }
     
     await pool.query(
-      `INSERT INTO meter_commands (meter_id, command_type, di_code, request_hex, response_hex, status, created_at)
-       VALUES (?, ?, 'DYNAMIC', ?, ?, ?, NOW())`,
-      [meter_id || 0, mappedType, request_hex, response_hex, status || 'pending']
+      `INSERT INTO meter_commands_log 
+        (meter_id, electricity_meter_id, command_type, di_code, command_name, source, channel, request_hex, response_hex, status, created_at)
+       VALUES (?, ?, ?, 'DYNAMIC', ?, 'ble', 'flutter', ?, ?, ?, NOW())`,
+      [meter_id || 0, meter_id || 0, mappedType, command_name, request_hex, response_hex, status || 'pending']
     );
     
     console.log(`\n======================================================`);
