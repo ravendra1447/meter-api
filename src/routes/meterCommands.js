@@ -24,29 +24,31 @@ router.post('/dynamic-commands/log', async (req, res, next) => {
     let mappedType = command_name || 'unknown';
     switch (command_name) {
       case 'enable_schedule':
+      case 'Programming Enable':
+      case 'Programming Enable (broadcast)':
       case 'write_cutoff_schedule':
       case 'write_date':
       case 'write_time':
-        mappedType = 'WRITE';
+        mappedType = 'write';
         break;
 
       case 'relay_control_on':
       case 'relay_control_off':
       case 'relay_trip_schedule':
-        mappedType = 'RELAY';
+        mappedType = 'relay';
         break;
 
       default:
-        mappedType = 'READ';
+        mappedType = 'read';
     }
-    
+
     await pool.query(
       `INSERT INTO meter_commands_log 
         (meter_id, electricity_meter_id, command_type, di_code, command_name, source, channel, request_hex, response_hex, status, created_at)
        VALUES (?, ?, ?, 'DYNAMIC', ?, 'ble', 'flutter', ?, ?, ?, NOW())`,
       [meter_id || 0, meter_id || 0, mappedType, command_name, request_hex, response_hex, status || 'pending']
     );
-    
+
     console.log(`\n======================================================`);
     console.log(`🔌 DYNAMIC COMMAND LOG RECEIVED`);
     console.log(`Meter ID : ${meter_id}`);
