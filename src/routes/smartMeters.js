@@ -238,6 +238,24 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
       [actualMeterId, req.params.meterId, dynamicDiCode, command_hex, formattedDate.replace(' ', 'T'), parsedJsonStr]
     );
 
+    // 6. LOG INTO meter_decoded_frames (As per custom syntax design)
+    await pool.query(
+      `INSERT INTO meter_decoded_frames 
+        (meter_id, raw_frame, address_hex, control_code, data_length, password_hex, operator_code, payload_data, checksum)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        actualMeterId,
+        command_hex,
+        meterNumStr.padStart(12, '0').match(/.{1,2}/g).join(' '),
+        '14',
+        10,
+        passHex,
+        oprHex,
+        `${ss} ${mm} ${hh} ${dd} ${MM} ${YY}`,
+        cs
+      ]
+    );
+
     console.log(`[SET-CUTOFF] Successfully completed. Return to App.`);
     return ok(res, { 
       message: 'Cutoff date updated manually and saved to schedule table',
