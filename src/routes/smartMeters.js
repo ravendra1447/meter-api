@@ -175,8 +175,8 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
     const passFormatted = passHex.match(/.{1,2}/g).map(add33Hex).join(' '); 
     const oprFormatted = oprHex.match(/.{1,2}/g).map(add33Hex).join(' '); 
 
-    // Address bytes NOT reversed, as per your exact requirement
-    const addrBytes = meterNumStr.padStart(12, '0').match(/.{1,2}/g).join(' '); 
+    // Address bytes REVERSED (Little-Endian) as per exact requirement
+    const addrBytes = meterNumStr.padStart(12, '0').match(/.{1,2}/g).reverse().join(' '); 
 
     // Fetch DI Code for Schedule (Typically 04001101 for Auto Trip Timing)
     const [diRows] = await pool.query("SELECT di_code FROM di_master WHERE di_name LIKE '%Schedule%' OR di_code = '04001101' LIMIT 1");
@@ -185,7 +185,7 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
     // Reverse and +33 for DI (DI is sent reversed)
     const diFormatted = dynamicDiCode.match(/.{1,2}/g).reverse().map(add33Hex).join(' '); 
 
-    // Time Formatting for Write Schedule: YY MM DD HH mm ss
+    // Time Formatting for Write Schedule: N1=1A, N2=00, ss mm hh dd MM YY (Reversed)
     const parts = formattedDate.split(/[- :]/); 
     const YY = parts[0].slice(-2);
     const MM = parts[1];
@@ -193,13 +193,15 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
     const hh = parts[3];
     const mm = parts[4];
     const ss = parts[5];
-    const timeHex = [YY, MM, dd, hh, mm, ss].map(add33Hex).join(' ');
+    
+    // N1=1A, N2=00
+    const nBytes = ['1A', '00', ss, mm, hh, dd, MM, YY].map(add33Hex).join(' ');
 
     // Assembly (Write Data = 14) 
-    const lengthHex = '12'; // 18 bytes: 4(DI) + 4(Pass) + 4(Opr) + 6(Time)
-    const frameBody = `68 ${addrBytes} 68 14 ${lengthHex} ${diFormatted} ${passFormatted} ${oprFormatted} ${timeHex}`;
+    const lengthHex = '10'; // 16 decimal bytes (4 Pass + 4 Opr + 8 N-bytes)
+    const frameBody = `68 ${addrBytes} 68 14 ${lengthHex} ${passFormatted} ${oprFormatted} ${nBytes}`;
     const cs = calcCS(frameBody);
-    const command_hex = `FE FE FE FE\n${frameBody}\n${cs}\n16`;
+    const command_hex = `FE FE FE FE ${frameBody} ${cs} 16`;
 
     // Construct parsed_json for Write Data
     const parsedJsonObj = {
@@ -207,9 +209,9 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
         preamble_hex: "FE FE FE FE",
         address_hex: meterNumStr.padStart(12, '0').match(/.{1,2}/g).join(' '),
         control_code: "14",
-        data_length: 18,
-        data_encoded_hex: `${diFormatted} ${passFormatted} ${oprFormatted} ${timeHex}`,
-        data_decoded_hex: `${dynamicDiCode} ${passHex.match(/.{1,2}/g).join(' ')} ${oprHex.match(/.{1,2}/g).join(' ')} ${YY} ${MM} ${dd} ${hh} ${mm} ${ss}`,
+        data_length: 16,
+        data_encoded_hex: `${passFormatted} ${oprFormatted} ${nBytes}`,
+        data_decoded_hex: `${passHex.match(/.{1,2}/g).join(' ')} ${oprHex.match(/.{1,2}/g).join(' ')} 1A 00 ${ss} ${mm} ${hh} ${dd} ${MM} ${YY}`,
         checksum_hex: cs,
         end_byte: 22,
         payload: {
