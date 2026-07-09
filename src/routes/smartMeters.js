@@ -4,6 +4,19 @@ const { ok, fail } = require('../utils/response');
 const smartMeterService = require('../services/smartMeterService');
 const meterReadingService = require('../services/meterReadingService');
 
+// Hex Helper Functions for DL/T 645
+function add33Hex(str) {
+  const num = parseInt(str, 16) + 0x33;
+  return num.toString(16).toUpperCase().padStart(2, '0');
+}
+
+function calcCS(frameStr) {
+  const bytes = frameStr.replace(/\s+/g, '').match(/.{1,2}/g) || [];
+  let sum = 0;
+  for (let b of bytes) sum += parseInt(b, 16);
+  return (sum % 256).toString(16).toUpperCase().padStart(2, '0');
+}
+
 const router = express.Router();
 
 router.get('/', async (req, res, next) => {
@@ -142,7 +155,44 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
       [actualMeterId, timeOnly]
     );
 
-    return ok(res, { message: 'Cutoff date updated manually and saved to schedule table' });
+    // 3. DYNAMIC HEX GENERATION
+    // Fetch configs for this meter
+    let meterNumStr = '010051140526';
+    if (emRows.length > 0) meterNumStr = emRows[0].meter_number;
+
+    const [configs] = await pool.query('SELECT param_key, param_value FROM meter_config WHERE meter_id = ?', [actualMeterId]);
+    const configMap = {};
+    for (let row of configs) configMap[row.param_key] = row.param_value;
+    
+    const passHex = configMap['password'] || '02000000';
+    const oprHex = configMap['operator_code'] || '00000000';
+
+    const passFormatted = passHex.match(/.{1,2}/g).map(add33Hex).join(' '); 
+    const oprFormatted = oprHex.match(/.{1,2}/g).map(add33Hex).join(' '); 
+
+    // Address bytes NOT reversed, as per your exact requirement
+    const addrBytes = meterNumStr.padStart(12, '0').match(/.{1,2}/g).join(' '); 
+
+    // Time Formatting: ss mm hh dd MM YY
+    const parts = formattedDate.split(/[- :]/); // e.g., '2026', '08', '05', '19', '00', '00'
+    const YY = parts[0].slice(-2);
+    const MM = parts[1];
+    const dd = parts[2];
+    const hh = parts[3];
+    const mm = parts[4];
+    const ss = parts[5];
+    const timeHex = [ss, mm, hh, dd, MM, YY].map(add33Hex).join(' ');
+
+    // Assembly (Write Data = 14) exactly as requested
+    const lengthHex = '10'; // Forced Length '10' as requested
+    const frameBody = `68 ${addrBytes} 68 14 ${lengthHex} ${passFormatted} ${oprFormatted} ${timeHex}`;
+    const cs = calcCS(frameBody);
+    const command_hex = `FE FE FE FE\n${frameBody}\n${cs}\n16`;
+
+    return ok(res, { 
+      message: 'Cutoff date updated manually and saved to schedule table',
+      command_hex: command_hex 
+    });
   } catch (e) {
     next(e);
   }
