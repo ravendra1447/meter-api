@@ -215,8 +215,8 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
         checksum_hex: cs,
         end_byte: 22,
         payload: {
-          format: "14_write",
-          di_code: dynamicDiCode,
+          format: "1C_write",
+          di_code: "1A00",
           pa: "0x" + passHex.substring(0, 2),
           password_hex: passHex.substring(2),
           operator_hex: oprHex,
@@ -267,14 +267,6 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
       if (enable_schedule_hex && enable_schedule_hex.includes('{ADDRESS}')) {
          enable_schedule_hex = enable_schedule_hex.replace(/\{ADDRESS\}/g, addrBytes);
       }
-
-      // Log the enable_schedule command in meter_commands_log as well
-      await pool.query(
-        `INSERT INTO meter_commands_log 
-          (meter_id, command_type, request_hex, status, created_at)
-         VALUES (?, 'ENABLE_SCHEDULE', ?, 'pending', NOW())`,
-        [actualMeterId, enable_schedule_hex]
-      );
     }
 
     console.log(`[SET-CUTOFF] Successfully completed. Return to App.`);
