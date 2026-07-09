@@ -157,7 +157,13 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
 
     // 3. DYNAMIC HEX GENERATION
     // Fetch configs for this meter
-    let meterNumStr = emRows.length > 0 ? emRows[0].meter_number : '000000000000';
+    let meterNumStr = '000000000000';
+    if (emRows.length > 0) {
+      meterNumStr = emRows[0].meter_number;
+    } else {
+      const [mRowsFallback] = await pool.query('SELECT meter_number FROM meters WHERE id = ? LIMIT 1', [actualMeterId]);
+      if (mRowsFallback.length > 0) meterNumStr = mRowsFallback[0].meter_number;
+    }
 
     const [configs] = await pool.query('SELECT param_key, param_value FROM meter_config WHERE meter_id = ?', [actualMeterId]);
     const configMap = {};
