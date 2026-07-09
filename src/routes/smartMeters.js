@@ -157,8 +157,7 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
 
     // 3. DYNAMIC HEX GENERATION
     // Fetch configs for this meter
-    let meterNumStr = '010051140526';
-    if (emRows.length > 0) meterNumStr = emRows[0].meter_number;
+    let meterNumStr = emRows.length > 0 ? emRows[0].meter_number : '000000000000';
 
     const [configs] = await pool.query('SELECT param_key, param_value FROM meter_config WHERE meter_id = ?', [actualMeterId]);
     const configMap = {};
@@ -173,39 +172,74 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
     // Address bytes NOT reversed, as per your exact requirement
     const addrBytes = meterNumStr.padStart(12, '0').match(/.{1,2}/g).join(' '); 
 
-    // Time Formatting: ss mm hh dd MM YY
-    const parts = formattedDate.split(/[- :]/); // e.g., '2026', '08', '05', '19', '00', '00'
+    // Fetch DI Code for Schedule (Typically 04001101 for Auto Trip Timing)
+    const [diRows] = await pool.query("SELECT di_code FROM di_master WHERE di_name LIKE '%Schedule%' OR di_code = '04001101' LIMIT 1");
+    const dynamicDiCode = diRows.length > 0 ? diRows[0].di_code : '04001101';
+
+    // Reverse and +33 for DI (DI is sent reversed)
+    const diFormatted = dynamicDiCode.match(/.{1,2}/g).reverse().map(add33Hex).join(' '); 
+
+    // Time Formatting for Write Schedule: YY MM DD HH mm ss
+    const parts = formattedDate.split(/[- :]/); 
     const YY = parts[0].slice(-2);
     const MM = parts[1];
     const dd = parts[2];
     const hh = parts[3];
     const mm = parts[4];
     const ss = parts[5];
-    const timeHex = [ss, mm, hh, dd, MM, YY].map(add33Hex).join(' ');
+    const timeHex = [YY, MM, dd, hh, mm, ss].map(add33Hex).join(' ');
 
-    // N1 = 1A (+33), N2 = 00 (+33)
-    const n1Hex = add33Hex('1A');
-    const n2Hex = add33Hex('00');
-
-    // Assembly (Relay Control = 1C) exactly as requested
-    const lengthHex = '10'; // 16 bytes: 4(Pass) + 4(Opr) + 1(N1) + 1(N2) + 6(Time)
-    const frameBody = `68 ${addrBytes} 68 1C ${lengthHex} ${passFormatted} ${oprFormatted} ${n1Hex} ${n2Hex} ${timeHex}`;
+    // Assembly (Write Data = 14) 
+    const lengthHex = '12'; // 18 bytes: 4(DI) + 4(Pass) + 4(Opr) + 6(Time)
+    const frameBody = `68 ${addrBytes} 68 14 ${lengthHex} ${diFormatted} ${passFormatted} ${oprFormatted} ${timeHex}`;
     const cs = calcCS(frameBody);
     const command_hex = `FE FE FE FE\n${frameBody}\n${cs}\n16`;
 
-    // 4. LOG INTO meter_commands_log
+    // Construct parsed_json for Write Data
+    const parsedJsonObj = {
+      request: {
+        preamble_hex: "FE FE FE FE",
+        address_hex: meterNumStr.padStart(12, '0').match(/.{1,2}/g).join(' '),
+        control_code: "14",
+        data_length: 18,
+        data_encoded_hex: `${diFormatted} ${passFormatted} ${oprFormatted} ${timeHex}`,
+        data_decoded_hex: `${dynamicDiCode} ${passHex.match(/.{1,2}/g).join(' ')} ${oprHex.match(/.{1,2}/g).join(' ')} ${YY} ${MM} ${dd} ${hh} ${mm} ${ss}`,
+        checksum_hex: cs,
+        end_byte: 22,
+        payload: {
+          format: "14_write",
+          di_code: dynamicDiCode,
+          pa: "0x" + passHex.substring(0, 2),
+          password_hex: passHex.substring(2),
+          operator_hex: oprHex,
+          datetime_iso: formattedDate.replace(' ', 'T')
+        }
+      },
+      response: null,
+      extra: null
+    };
+
+    const parsedJsonStr = JSON.stringify(parsedJsonObj);
+
+    console.log(`[SET-CUTOFF] Final HEX command generated: \n${command_hex}`);
+    console.log(`[SET-CUTOFF] Inserting into meter_commands_log for meter_id ${actualMeterId}`);
+
+    // 5. LOG INTO meter_commands_log
     await pool.query(
       `INSERT INTO meter_commands_log 
-        (meter_id, electricity_meter_id, command_type, command_name, control_code, relay_cmd, source, request_hex, status, created_at)
-       VALUES (?, ?, 'relay', 'set_cutoff_schedule', '1C', '1A (Trip)', 'api', ?, 'pending', NOW())`,
-      [actualMeterId, req.params.meterId, command_hex]
+        (meter_id, electricity_meter_id, command_type, di_code, command_name, control_code, source, channel, request_hex, status, datetime_iso, parsed_json, created_at)
+       VALUES (?, ?, 'write', ?, 'Set Internal Schedule', '14', 'ble', 'flutter', ?, 'pending', ?, ?, NOW())`,
+      [actualMeterId, req.params.meterId, dynamicDiCode, command_hex, formattedDate.replace(' ', 'T'), parsedJsonStr]
     );
 
+    console.log(`[SET-CUTOFF] Successfully completed. Return to App.`);
     return ok(res, { 
       message: 'Cutoff date updated manually and saved to schedule table',
       command_hex: command_hex 
     });
   } catch (e) {
+    console.error(`[SET-CUTOFF] ❌ ERROR: ${e.message}`);
+    console.error(e);
     next(e);
   }
 });

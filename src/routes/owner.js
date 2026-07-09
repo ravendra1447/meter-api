@@ -15,6 +15,8 @@ const meterBillingScheduleService = require('../services/meterBillingScheduleSer
 const electricityConsumptionService = require('../services/electricityConsumptionService');
 const smartMeterService = require('../services/smartMeterService');
 const prepaidRelayService = require('../services/prepaidRelayService');
+const meterSchedulerService = require('../services/meterSchedulerService');
+const schedulerConfig = require('../config/meterScheduler');
 const paymentMethods = require('../utils/paymentMethods');
 
 const router = express.Router();
@@ -833,13 +835,6 @@ router.post('/properties', async (req, res) => {
       security_deposit_amount,
       status,
       meter_ids,
-      floor,
-      rooms,
-      parking_charges,
-      electricity_tariff,
-      contract_start,
-      contract_end,
-      payment_cycle,
     } = req.body;
 
     if (!name || !address) {
@@ -852,8 +847,8 @@ router.post('/properties', async (req, res) => {
       `INSERT INTO properties
         (owner_id, property_code, name, address, city, state, pincode,
          monthly_rent, maintenance_charges, water_charges, security_deposit_amount,
-         status, floor, rooms, parking_charges, electricity_tariff, contract_start, contract_end, payment_cycle, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+         status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         req.user.id,
         propertyCode,
@@ -862,18 +857,11 @@ router.post('/properties', async (req, res) => {
         city ?? null,
         state ?? null,
         pincode ?? null,
-        monthly_rent || 0,
-        maintenance_charges || 0,
-        water_charges || 0,
-        security_deposit_amount || 0,
-        status || 'active',
-        floor || null,
-        rooms || null,
-        parking_charges || 0,
-        electricity_tariff || 0,
-        contract_start || null,
-        contract_end || null,
-        payment_cycle || '1 Month',
+        monthly_rent ?? 0,
+        maintenance_charges ?? 0,
+        water_charges ?? 0,
+        security_deposit_amount ?? 0,
+        status ?? 'active',
       ]
     );
 
@@ -883,21 +871,9 @@ router.post('/properties', async (req, res) => {
 
     await assignMetersToProperty(req.user.id, result.insertId, meter_ids);
 
-    const [propertyRows] = await pool.query(
-      `SELECT p.*,
-         (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', em.id, 'meter_name', em.meter_name, 'meter_number', em.meter_number))
-          FROM electricity_meters em WHERE em.property_id = p.id) AS electricity_meters_json
-       FROM properties p WHERE p.id = ? LIMIT 1`,
-      [result.insertId]
-    );
-
-    const property = propertyRows[0] ?? rows[0];
+    const property = rows[0];
     const [meters] = await pool.query(
-      `SELECT em.*, m.current_reading 
-       FROM electricity_meters em 
-       LEFT JOIN meters m ON em.meter_number = m.meter_number 
-       WHERE em.property_id = ? 
-       ORDER BY em.id DESC`,
+      'SELECT * FROM electricity_meters WHERE property_id = ? ORDER BY id DESC',
       [result.insertId]
     );
     property.electricity_meters = meters;
@@ -936,36 +912,9 @@ router.get('/properties/:property', async (req, res) => {
     );
 
     const [meters] = await pool.query(
-      `SELECT em.*, m.current_reading 
-       FROM electricity_meters em 
-       LEFT JOIN meters m ON em.meter_number = m.meter_number 
-       WHERE em.property_id = ? 
-       ORDER BY em.id DESC`,
+      'SELECT * FROM electricity_meters WHERE property_id = ? ORDER BY id DESC',
       [property.id]
     );
-
-    // Fetch dynamic rent due date from schedules
-    let rentDueDate = property.rent_due_date || '7th of Every Month';
-    const [scheduleRows] = await pool.query(
-      `SELECT s.schedule_time 
-       FROM schedules s 
-       JOIN electricity_meters em ON s.meter_id = em.meter_number OR s.meter_id = em.id
-       WHERE em.property_id = ? AND s.is_active = 1
-       ORDER BY s.id DESC LIMIT 1`,
-      [property.id]
-    );
-
-    if (scheduleRows.length > 0 && scheduleRows[0].schedule_time) {
-      // Assuming schedule_time is a string or Date object. We convert it to a string showing date and time.
-      const d = new Date(scheduleRows[0].schedule_time);
-      if (!isNaN(d.getTime())) {
-        // Format to YYYY-MM-DD HH:mm
-        const pad = (n) => n.toString().padStart(2, '0');
-        rentDueDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-      } else {
-        rentDueDate = scheduleRows[0].schedule_time.toString();
-      }
-    }
 
     const activeTenants = tenants.map((t) => ({
       ...t,
@@ -979,7 +928,6 @@ router.get('/properties/:property', async (req, res) => {
 
     return ok(res, {
       ...property,
-      rent_due_date: rentDueDate,
       active_tenants: activeTenants,
       electricity_meters: meters,
     });
@@ -1108,10 +1056,10 @@ router.get('/meters', async (req, res) => {
       ...m,
       property: m.linked_property_id
         ? {
-            id: m.linked_property_id,
-            name: m.linked_property_name,
-            property_code: m.linked_property_code,
-          }
+          id: m.linked_property_id,
+          name: m.linked_property_name,
+          property_code: m.linked_property_code,
+        }
         : null,
     }));
     return ok(res, data);
@@ -1279,11 +1227,9 @@ router.post('/properties/:property/meters', async (req, res) => {
 
     const [result] = await pool.query(
       `INSERT INTO electricity_meters
-
         (owner_id, property_id, meter_name, meter_number, model_number, series_number, meter_type,
          initial_balance, current_balance, tariff_per_unit, last_reading, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-
       [
         req.user.id,
         property.id,
@@ -1297,9 +1243,6 @@ router.post('/properties/:property/meters', async (req, res) => {
         tariff_per_unit ?? 8,
         last_reading ?? 0,
         status ?? 'active',
-        req.body.latitude ?? null,
-        req.body.longitude ?? null,
-        req.body.installation_date ?? new Date(),
       ]
     );
 
@@ -1394,9 +1337,6 @@ router.put('/meters/:meter', async (req, res) => {
       'tariff_per_unit',
       'last_reading',
       'status',
-      'latitude',
-      'longitude',
-      'installation_date',
     ];
 
     const updates = [];
@@ -1517,15 +1457,21 @@ router.get('/meters/:electricityMeter/smart-status', async (req, res) => {
       [smartMeter.id]
     );
 
+    const outstanding = meter.property_id
+      ? await billingStatementService.getOutstandingForProperty(meter.property_id)
+      : 0;
+
     return ok(res, {
       linked: true,
       electricity_meter: meter,
       smart_meter: smartMeter,
       schedules,
       pending_relay_action: smartMeter.pending_relay_action,
-      dlt645_relay_control_di: '04008001',
-      dlt645_trip_command: '1A',
-      dlt645_close_command: '1B',
+      scheduler: meterSchedulerService.formatSchedulerStatus(smartMeter, meter, outstanding),
+      dlt645_relay_control_di: schedulerConfig.dlt645RelayControlDi,
+      dlt645_trip_command: schedulerConfig.relay.trip_command,
+      dlt645_close_command: schedulerConfig.relay.direct_close_command,
+      dlt645_relay: schedulerConfig.relay,
       sim_enabled: Boolean(smartMeter.sim_enabled),
       mqtt_online: Boolean(smartMeter.mqtt_online),
       last_mqtt_at: smartMeter.last_mqtt_at
@@ -1597,10 +1543,19 @@ router.post('/meters/:electricityMeter/remote-relay', async (req, res) => {
     }
 
     if (!mqttConfigured()) {
-      return fail(
+      await pool.query(
+        `UPDATE meters SET pending_relay_action = ?, updated_at = NOW() WHERE id = ?`,
+        [action, smartMeter.id]
+      );
+      return ok(
         res,
-        'MQTT broker not configured on server. Add SAVING_MQTT_HOST to .env',
-        503
+        {
+          relay_status: smartMeter.relay_status,
+          pending_relay_action: action,
+          channel: 'ble_pending',
+          mqtt_configured: false,
+        },
+        `MQTT not configured. Relay ${action} pending — open Smart Meter screen and connect Bluetooth.`
       );
     }
 
@@ -1763,6 +1718,303 @@ router.post('/meters/:electricityMeter/relay-pending-clear', async (req, res) =>
   } catch (err) {
     console.error(err);
     return fail(res, 'Failed to clear pending relay.', 500);
+  }
+});
+
+router.post('/meters/:electricityMeter/scheduler-ack', async (req, res) => {
+  try {
+    const meter = await loadOwnerMeter(req.params.electricityMeter, req.user.id);
+    if (!meter) {
+      return fail(res, 'Meter not found.', 404);
+    }
+    if (meter.forbidden) {
+      return fail(res, 'You do not have access to this meter.', 403);
+    }
+
+    const { command } = req.body;
+    if (!['FREEZE', 'SETTLEMENT', 'PRE_ALARM'].includes(String(command || '').toUpperCase())) {
+      return fail(res, 'command must be FREEZE, SETTLEMENT, or PRE_ALARM.', 422);
+    }
+
+    const smartMeter = await resolveSmartMeter(meter);
+    if (!smartMeter) {
+      return fail(res, 'Smart meter not linked.', 404);
+    }
+
+    const updated = await meterSchedulerService.acknowledgeCommand(
+      smartMeter.id,
+      String(command).toUpperCase()
+    );
+    const outstanding = meter.property_id
+      ? await billingStatementService.getOutstandingForProperty(meter.property_id)
+      : 0;
+
+    return ok(res, {
+      scheduler: meterSchedulerService.formatSchedulerStatus(updated, meter, outstanding),
+    });
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to acknowledge scheduler command.', 500);
+  }
+});
+
+// ── Owner Payment Flow ────────────────────────────────────────────────────────
+
+// Agle mahine ki 7th, 11:00 AM cutoff schedule (December rollover handled by Date).
+function computeNextScheduleDate(from = new Date()) {
+  return new Date(from.getFullYear(), from.getMonth() + 1, 7, 11, 0, 0, 0);
+}
+
+function formatDbDateTime(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  );
+}
+
+function generatePaymentToken(meterId) {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp =
+    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+    `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  return `RM-${meterId || 'X'}-${stamp}-${rand}`;
+}
+
+// Meter se active property_tenant assignment resolve karein.
+async function resolveMeterActiveTenant(meter, conn = pool) {
+  if (!meter.property_id) return null;
+  const [rows] = await conn.query(
+    `SELECT pt.id AS property_tenant_id, pt.tenant_id
+     FROM property_tenants pt
+     WHERE pt.property_id = ? AND pt.status = 'active'
+     ORDER BY pt.created_at DESC
+     LIMIT 1`,
+    [meter.property_id]
+  );
+  return rows[0] ?? null;
+}
+
+// GET /owner/meters/:electricityMeter/charges — selected meter ke saare applicable charges + total bill.
+router.get('/meters/:electricityMeter/charges', async (req, res) => {
+  try {
+    const meter = await loadOwnerMeter(req.params.electricityMeter, req.user.id);
+    if (!meter) {
+      return fail(res, 'Meter not found.', 404);
+    }
+    if (meter.forbidden) {
+      return fail(res, 'You do not have access to this meter.', 403);
+    }
+
+    const assignment = await resolveMeterActiveTenant(meter);
+    if (!assignment) {
+      return ok(res, {
+        electricity_meter: meter,
+        meter_number: meter.meter_number,
+        tenant: null,
+        line_items: [],
+        total_amount: 0,
+        message: 'No active tenant assigned to this meter\'s property.',
+      });
+    }
+
+    const statement = await billingStatementService.getStatement(
+      assignment.property_tenant_id,
+      req.user.id
+    );
+
+    if (!statement) {
+      return ok(res, {
+        electricity_meter: meter,
+        meter_number: meter.meter_number,
+        tenant: null,
+        line_items: [],
+        total_amount: 0,
+      });
+    }
+
+    // Statement ke line items (rent/maintenance/water/electricity) + previous balance ko merge karein.
+    const lineItems = Array.isArray(statement.line_items) ? [...statement.line_items] : [];
+    if (Number(statement.previous_balance) > 0) {
+      lineItems.push({
+        title: 'Previous Balance',
+        subtitle: 'Carried forward',
+        usage: '—',
+        rate: '—',
+        amount: Number(statement.previous_balance),
+      });
+    }
+
+    return ok(res, {
+      electricity_meter: meter,
+      meter_number: meter.meter_number,
+      property_tenant_id: assignment.property_tenant_id,
+      tenant: statement.tenant,
+      property: statement.property,
+      period: statement.period,
+      status: statement.status,
+      status_label: statement.status_label,
+      line_items: lineItems,
+      subtotal: Number(statement.subtotal || 0),
+      total_amount: Number(statement.total || 0),
+    });
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to load meter charges.', 500);
+  }
+});
+
+// POST /owner/payments/apply — payment record + token generate + next schedule compute.
+router.post('/payments/apply', async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { electricity_meter_id, amount, method } = req.body;
+    if (!electricity_meter_id) {
+      return fail(res, 'electricity_meter_id is required.', 422);
+    }
+    const payAmount = Number(amount);
+    if (!Number.isFinite(payAmount) || payAmount <= 0) {
+      return fail(res, 'A valid amount is required.', 422);
+    }
+    const payMethod = String(method || 'cash');
+
+    const meter = await loadOwnerMeter(electricity_meter_id, req.user.id);
+    if (!meter) {
+      return fail(res, 'Meter not found.', 404);
+    }
+    if (meter.forbidden) {
+      return fail(res, 'You do not have access to this meter.', 403);
+    }
+
+    const assignment = await resolveMeterActiveTenant(meter);
+    const token = generatePaymentToken(meter.id);
+    const nextScheduleDate = computeNextScheduleDate();
+
+    await conn.beginTransaction();
+
+    const [result] = await conn.query(
+      `INSERT INTO owner_payments
+         (owner_id, electricity_meter_id, property_id, property_tenant_id, tenant_id,
+          meter_number, amount, method, payment_token, next_schedule_date, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paid', NOW(), NOW())`,
+      [
+        req.user.id,
+        meter.id,
+        meter.property_id ?? null,
+        assignment?.property_tenant_id ?? null,
+        assignment?.tenant_id ?? null,
+        meter.meter_number ?? null,
+        payAmount,
+        payMethod,
+        token,
+        formatDbDateTime(nextScheduleDate),
+      ]
+    );
+
+    // Tenant ke active unbilled charges ko payment ke against 'used' mark karein.
+    if (assignment?.tenant_id) {
+      let remaining = payAmount;
+      const [charges] = await conn.query(
+        `SELECT * FROM tenant_unbilled_charges
+         WHERE tenant_id = ? AND status = 'active'
+         ORDER BY id ASC`,
+        [assignment.tenant_id]
+      );
+      for (const charge of charges) {
+        if (remaining <= 0) break;
+        const chargeAmount = Number(charge.amount);
+        if (remaining >= chargeAmount) {
+          await conn.query(
+            "UPDATE tenant_unbilled_charges SET status = 'used', updated_at = NOW() WHERE id = ?",
+            [charge.id]
+          );
+          remaining -= chargeAmount;
+        }
+      }
+    }
+
+    await conn.commit();
+
+    return ok(
+      res,
+      {
+        payment_id: result.insertId,
+        payment_token: token,
+        amount: payAmount,
+        method: payMethod,
+        meter_number: meter.meter_number,
+        electricity_meter_id: meter.id,
+        tenant: assignment
+          ? { property_tenant_id: assignment.property_tenant_id, tenant_id: assignment.tenant_id }
+          : null,
+        next_schedule_date: nextScheduleDate.toISOString(),
+        next_schedule_label: formatDbDateTime(nextScheduleDate),
+        status: 'paid',
+      },
+      'Payment applied successfully.'
+    );
+  } catch (err) {
+    try {
+      await conn.rollback();
+    } catch (_) {
+      /* noop */
+    }
+    console.error(err);
+    return fail(res, 'Failed to apply payment.', 500);
+  } finally {
+    conn.release();
+  }
+});
+
+// POST /owner/payments/:id/sync-complete — payment synced mark + meter next_cutoff_date update.
+router.post('/payments/:id/sync-complete', async (req, res) => {
+  try {
+    const paymentId = req.params.id;
+    const [rows] = await pool.query(
+      'SELECT * FROM owner_payments WHERE id = ? AND owner_id = ? LIMIT 1',
+      [paymentId, req.user.id]
+    );
+    const payment = rows[0] ?? null;
+    if (!payment) {
+      return fail(res, 'Payment not found.', 404);
+    }
+
+    const nextCutoff = req.body?.next_cutoff_date
+      ? formatDbDateTime(new Date(req.body.next_cutoff_date))
+      : payment.next_schedule_date
+        ? formatDbDateTime(new Date(payment.next_schedule_date))
+        : null;
+
+    await pool.query(
+      `UPDATE owner_payments SET status = 'synced', synced_at = NOW(), updated_at = NOW() WHERE id = ?`,
+      [paymentId]
+    );
+
+    // Smart meter row ka next_cutoff_date update karein aur pending flag clear karein.
+    if (payment.electricity_meter_id) {
+      const meter = await loadOwnerMeter(payment.electricity_meter_id, req.user.id);
+      if (meter && !meter.forbidden) {
+        const smartMeter = await resolveOrCreateSmartMeter(meter);
+        await pool.query(
+          `UPDATE meters
+           SET next_cutoff_date = ?, pending_schedule_sync = 0, relay_status = 'ON',
+               pending_relay_action = NULL, updated_at = NOW()
+           WHERE id = ?`,
+          [nextCutoff, smartMeter.id]
+        );
+      }
+    }
+
+    return ok(
+      res,
+      { payment_id: Number(paymentId), status: 'synced', next_cutoff_date: nextCutoff },
+      'Meter schedule synced successfully.'
+    );
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to mark payment synced.', 500);
   }
 });
 
@@ -2194,10 +2446,10 @@ router.get('/unbilled-charges', async (req, res) => {
         : null,
       electricity_consumption: row.ec_id
         ? {
-            id: row.ec_id,
-            total_consumed_units: row.total_consumed_units,
-            calculation_date: row.calculation_date,
-          }
+          id: row.ec_id,
+          total_consumed_units: row.total_consumed_units,
+          calculation_date: row.calculation_date,
+        }
         : null,
       creator: row.creator_id ? { id: row.creator_id, name: row.creator_name } : null,
     }));
@@ -2608,39 +2860,6 @@ router.delete('/other-active-charges/:otherActiveCharge', async (req, res) => {
   } catch (err) {
     console.error(err);
     return fail(res, 'Failed to delete other active charge.', 500);
-  }
-});
-
-// ========== TARIFF PLANS ==========
-
-router.get('/tariff-plans', async (req, res) => {
-  try {
-    const [rows] = await pool.query('SELECT * FROM tariff_plans ORDER BY created_at DESC');
-    return ok(res, rows);
-  } catch (err) {
-    console.error(err);
-    return fail(res, 'Failed to fetch tariff plans.', 500);
-  }
-});
-
-router.post('/tariff-plans', async (req, res) => {
-  try {
-    const { name, rate_per_unit, fixed_charge } = req.body;
-    if (!name || rate_per_unit == null) {
-      return fail(res, 'Name and rate_per_unit are required.', 422);
-    }
-
-    const [result] = await pool.query(
-      `INSERT INTO tariff_plans (name, rate_per_unit, fixed_charge, created_at)
-       VALUES (?, ?, ?, NOW())`,
-      [name, rate_per_unit, fixed_charge || 0]
-    );
-
-    const [rows] = await pool.query('SELECT * FROM tariff_plans WHERE id = ? LIMIT 1', [result.insertId]);
-    return ok(res, rows[0], 'Tariff plan created successfully.', 201);
-  } catch (err) {
-    console.error(err);
-    return fail(res, 'Failed to create tariff plan.', 500);
   }
 });
 

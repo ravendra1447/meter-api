@@ -9,6 +9,7 @@ const bluetoothRouter = require('./bluetooth');
 const usageRouter = require('./usage');
 const mqttRouter = require('./mqtt');
 const meterCommandsRouter = require('./meterCommands');
+const metersRouter = require('./meters');
 
 const router = express.Router();
 
@@ -53,6 +54,16 @@ router.get('/', (req, res) => {
         'POST /api/smart-meters/register': 'Auto-register meter by MAC',
         'GET /api/smart-meters/{meterId}/dashboard': 'Meter dashboard data',
         'POST /api/smart-meters': 'Register new smart meter',
+        'POST /api/smart-meters/{meterId}/sync-schedule': 'Clear pending schedule sync after BLE write',
+      },
+      meters: {
+        'GET /api/meters/{meterId}/scan-info': 'First-scan / installation status for Flutter',
+        'POST /api/meters/location': 'Save GPS coordinates for meter install',
+        'POST /api/meters/installation': 'Save installation date',
+        'POST /api/meters/command-log': 'Save to meter_commands_log table',
+        'POST /api/meters/parse-frame': 'Decode DLT645 hex frame for debugging',
+        'GET /api/meters/command-log?meter_id=': 'List meter_commands_log rows',
+        'GET /api/meter-commands-log': 'List meter_commands_log (auth required)',
       },
       mqtt: {
         'POST /api/mqtt/uplink': 'MQTT uplink webhook stub',
@@ -70,6 +81,7 @@ router.use('/smart-meters', smartMetersRouter);
 router.use('/bluetooth', bluetoothRouter);
 router.use('/usage', usageRouter);
 router.use('/mqtt', mqttRouter);
+router.use('/meters', metersRouter);
 router.use('/', meterCommandsRouter);
 
 module.exports = router;

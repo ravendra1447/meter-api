@@ -2,8 +2,10 @@ const express = require('express');
 const { ok, fail } = require('../utils/response');
 const { authenticate } = require('../middleware/auth');
 const diMasterService = require('../services/diMasterService');
+const meterCommandLogService = require('../services/meterCommandLogService');
 
 const router = express.Router();
+
 
 // ========== NEW: DYNAMIC COMMANDS ========== (Public/Unauthenticated)
 
@@ -43,7 +45,7 @@ router.post('/dynamic-commands/log', async (req, res, next) => {
     }
 
     await pool.query(
-      `INSERT INTO meter_commands_log 
+      `INSERT INTO meter_commands_log
         (meter_id, electricity_meter_id, command_type, di_code, command_name, source, channel, request_hex, response_hex, status, created_at)
        VALUES (?, ?, ?, 'DYNAMIC', ?, 'ble', 'flutter', ?, ?, ?, NOW())`,
       [meter_id || 0, meter_id || 0, mappedType, command_name, request_hex, response_hex, status || 'pending']
@@ -139,32 +141,34 @@ router.patch('/command-queue/:id', async (req, res, next) => {
   }
 });
 
-router.get('/meter-commands', async (req, res, next) => {
+router.get('/meter-commands-log', async (req, res, next) => {
   try {
-    const pool = require('../config/database');
-    const clauses = [];
-    const params = [];
-
-    if (req.query.meter_id) {
-      clauses.push('meter_id = ?');
-      params.push(Number(req.query.meter_id));
-    }
-    if (req.query.di_code) {
-      clauses.push('di_code = ?');
-      params.push(diMasterService.normalizeDiCode(req.query.di_code));
-    }
-
-    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-    const [rows] = await pool.query(
-      `SELECT * FROM meter_commands ${where} ORDER BY created_at DESC LIMIT 100`,
-      params
-    );
+    const rows = await meterCommandLogService.listCommands({
+      meterId: req.query.meter_id,
+      electricityMeterId: req.query.electricity_meter_id,
+      controlCode: req.query.control_code,
+      relayCmd: req.query.relay_cmd,
+      status: req.query.status,
+      limit: req.query.limit,
+    });
     return ok(res, rows);
   } catch (e) {
     next(e);
   }
 });
 
-
+/** @deprecated use GET /meter-commands-log */
+router.get('/meter-commands', async (req, res, next) => {
+  try {
+    const rows = await meterCommandLogService.listCommands({
+      meterId: req.query.meter_id,
+      controlCode: req.query.control_code,
+      limit: req.query.limit,
+    });
+    return ok(res, rows);
+  } catch (e) {
+    next(e);
+  }
+});
 
 module.exports = router;
