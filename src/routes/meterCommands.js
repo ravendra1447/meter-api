@@ -2,9 +2,7 @@ const express = require('express');
 const { ok, fail } = require('../utils/response');
 const { authenticate } = require('../middleware/auth');
 const diMasterService = require('../services/diMasterService');
-const meterCommandLogService = require('../services/meterCommandLogService');
-
-const router = express.Router();
+const pool = require('../config/database');const router = express.Router();
 
 
 // ========== NEW: DYNAMIC COMMANDS ========== (Public/Unauthenticated)
@@ -143,14 +141,30 @@ router.patch('/command-queue/:id', async (req, res, next) => {
 
 router.get('/meter-commands-log', async (req, res, next) => {
   try {
-    const rows = await meterCommandLogService.listCommands({
-      meterId: req.query.meter_id,
-      electricityMeterId: req.query.electricity_meter_id,
-      controlCode: req.query.control_code,
-      relayCmd: req.query.relay_cmd,
-      status: req.query.status,
-      limit: req.query.limit,
-    });
+    let query = 'SELECT * FROM meter_commands_log WHERE 1=1';
+    let params = [];
+
+    if (req.query.meter_id) {
+      query += ' AND meter_id = ?';
+      params.push(req.query.meter_id);
+    }
+    if (req.query.electricity_meter_id) {
+      query += ' AND electricity_meter_id = ?';
+      params.push(req.query.electricity_meter_id);
+    }
+    if (req.query.control_code) {
+      query += ' AND control_code = ?';
+      params.push(req.query.control_code);
+    }
+    if (req.query.status) {
+      query += ' AND status = ?';
+      params.push(req.query.status);
+    }
+    
+    query += ' ORDER BY id DESC LIMIT ?';
+    params.push(req.query.limit ? parseInt(req.query.limit) : 50);
+
+    const [rows] = await pool.query(query, params);
     return ok(res, rows);
   } catch (e) {
     next(e);
@@ -160,11 +174,22 @@ router.get('/meter-commands-log', async (req, res, next) => {
 /** @deprecated use GET /meter-commands-log */
 router.get('/meter-commands', async (req, res, next) => {
   try {
-    const rows = await meterCommandLogService.listCommands({
-      meterId: req.query.meter_id,
-      controlCode: req.query.control_code,
-      limit: req.query.limit,
-    });
+    let query = 'SELECT * FROM meter_commands_log WHERE 1=1';
+    let params = [];
+
+    if (req.query.meter_id) {
+      query += ' AND meter_id = ?';
+      params.push(req.query.meter_id);
+    }
+    if (req.query.control_code) {
+      query += ' AND control_code = ?';
+      params.push(req.query.control_code);
+    }
+    
+    query += ' ORDER BY id DESC LIMIT ?';
+    params.push(req.query.limit ? parseInt(req.query.limit) : 50);
+
+    const [rows] = await pool.query(query, params);
     return ok(res, rows);
   } catch (e) {
     next(e);
