@@ -256,9 +256,21 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
       ]
     );
 
+    // 7. FETCH enable_schedule HEX TEMPLATE
+    const [enableRows] = await pool.query("SELECT hex_template FROM dynamic_meter_commands WHERE command_name = 'enable_schedule' LIMIT 1");
+    let enable_schedule_hex = null;
+    if (enableRows.length > 0) {
+      enable_schedule_hex = enableRows[0].hex_template;
+      // If the template needs meter address
+      if (enable_schedule_hex && enable_schedule_hex.includes('{ADDRESS}')) {
+         enable_schedule_hex = enable_schedule_hex.replace(/\{ADDRESS\}/g, addrBytes);
+      }
+    }
+
     console.log(`[SET-CUTOFF] Successfully completed. Return to App.`);
     return ok(res, { 
       message: 'Cutoff date updated manually and saved to schedule table',
+      enable_schedule_hex: enable_schedule_hex,
       command_hex: command_hex 
     });
   } catch (e) {

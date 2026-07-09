@@ -15,8 +15,7 @@ const meterBillingScheduleService = require('../services/meterBillingScheduleSer
 const electricityConsumptionService = require('../services/electricityConsumptionService');
 const smartMeterService = require('../services/smartMeterService');
 const prepaidRelayService = require('../services/prepaidRelayService');
-const meterSchedulerService = require('../services/meterSchedulerService');
-const schedulerConfig = require('../config/meterScheduler');
+
 const paymentMethods = require('../utils/paymentMethods');
 
 const router = express.Router();
