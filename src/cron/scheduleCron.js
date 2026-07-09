@@ -153,6 +153,9 @@ async function processDailySchedules() {
     // ========== CHECK BALANCE FOR AUTO OFF/ON ==========
     await checkBalanceAndRelay();
 
+    // ========== CHECK MANUAL CUTOFF DATE (API SCHEDULE) ==========
+    await checkNextCutoffDate();
+
   } catch (error) {
     console.error('[Schedule] Error:', error);
   }
@@ -376,6 +379,47 @@ async function markRelayExecuted(smartMeterId, action) {
   } catch (error) {
     console.error('[Relay] Error marking executed:', error);
     return false;
+  }
+}
+
+/**
+ * Check meters for manually set next_cutoff_date via API
+ * Triggers OFF action automatically when date/time is reached.
+ */
+async function checkNextCutoffDate() {
+  try {
+    const [meters] = await pool.query(`
+      SELECT 
+        em.id as electricity_meter_id,
+        em.meter_number,
+        m.id as smart_meter_id,
+        m.next_cutoff_date
+      FROM electricity_meters em
+      INNER JOIN meters m ON m.meter_number = em.meter_number
+      WHERE m.next_cutoff_date IS NOT NULL 
+        AND m.next_cutoff_date <= NOW() 
+        AND m.pending_schedule_sync = true
+    `);
+
+    for (const meter of meters) {
+      console.log(`[Schedule] ⏰ Cutoff date reached for meter ${meter.meter_number} (API Schedule)`);
+      
+      // Execute OFF action which updates pending_relay_action = 'OFF'
+      await executeScheduleAction(
+        { id: meter.smart_meter_id, meter_number: meter.meter_number }, 
+        'OFF', 
+        meter.electricity_meter_id, 
+        meter.smart_meter_id
+      );
+
+      // Clear the cutoff date so it doesn't run repeatedly
+      await pool.query(
+        `UPDATE meters SET pending_schedule_sync = false, next_cutoff_date = NULL WHERE id = ?`,
+        [meter.smart_meter_id]
+      );
+    }
+  } catch (error) {
+    console.error('[Schedule] Error in checkNextCutoffDate:', error);
   }
 }
 

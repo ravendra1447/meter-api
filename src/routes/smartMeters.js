@@ -193,6 +193,14 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
     const cs = calcCS(frameBody);
     const command_hex = `FE FE FE FE\n${frameBody}\n${cs}\n16`;
 
+    // 4. LOG INTO meter_commands_log
+    await pool.query(
+      `INSERT INTO meter_commands_log 
+        (meter_id, electricity_meter_id, command_type, command_name, control_code, relay_cmd, source, request_hex, status, created_at)
+       VALUES (?, ?, 'relay', 'set_cutoff_schedule', '1C', '1A (Trip)', 'api', ?, 'pending', NOW())`,
+      [actualMeterId, req.params.meterId, command_hex]
+    );
+
     return ok(res, { 
       message: 'Cutoff date updated manually and saved to schedule table',
       command_hex: command_hex 
