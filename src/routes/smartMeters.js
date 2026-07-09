@@ -197,9 +197,9 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
     // N1=1A, N2=00
     const nBytes = ['1A', '00', ss, mm, hh, dd, MM, YY].map(add33Hex).join(' ');
 
-    // Assembly (Write Data = 14) 
+    // Assembly (Write Data = 1C) 
     const lengthHex = '10'; // 16 decimal bytes (4 Pass + 4 Opr + 8 N-bytes)
-    const frameBody = `68 ${addrBytes} 68 14 ${lengthHex} ${passFormatted} ${oprFormatted} ${nBytes}`;
+    const frameBody = `68 ${addrBytes} 68 1C ${lengthHex} ${passFormatted} ${oprFormatted} ${nBytes}`;
     const cs = calcCS(frameBody);
     const command_hex = `FE FE FE FE ${frameBody} ${cs} 16`;
 
@@ -208,7 +208,7 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
       request: {
         preamble_hex: "FE FE FE FE",
         address_hex: meterNumStr.padStart(12, '0').match(/.{1,2}/g).join(' '),
-        control_code: "14",
+        control_code: "1C",
         data_length: 16,
         data_encoded_hex: `${passFormatted} ${oprFormatted} ${nBytes}`,
         data_decoded_hex: `${passHex.match(/.{1,2}/g).join(' ')} ${oprHex.match(/.{1,2}/g).join(' ')} 1A 00 ${ss} ${mm} ${hh} ${dd} ${MM} ${YY}`,
