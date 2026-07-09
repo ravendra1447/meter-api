@@ -9,8 +9,6 @@ const bluetoothRouter = require('./bluetooth');
 const usageRouter = require('./usage');
 const mqttRouter = require('./mqtt');
 const meterCommandsRouter = require('./meterCommands');
-const metersRouter = require('./meters');
-
 const router = express.Router();
 
 router.get('/', (req, res) => {
@@ -81,7 +79,6 @@ router.use('/smart-meters', smartMetersRouter);
 router.use('/bluetooth', bluetoothRouter);
 router.use('/usage', usageRouter);
 router.use('/mqtt', mqttRouter);
-router.use('/meters', metersRouter);
 router.use('/', meterCommandsRouter);
 
 module.exports = router;
