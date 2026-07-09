@@ -183,9 +183,13 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
     const ss = parts[5];
     const timeHex = [ss, mm, hh, dd, MM, YY].map(add33Hex).join(' ');
 
-    // Assembly (Write Data = 14) exactly as requested
-    const lengthHex = '10'; // Forced Length '10' as requested
-    const frameBody = `68 ${addrBytes} 68 14 ${lengthHex} ${passFormatted} ${oprFormatted} ${timeHex}`;
+    // N1 = 1A (+33), N2 = 00 (+33)
+    const n1Hex = add33Hex('1A');
+    const n2Hex = add33Hex('00');
+
+    // Assembly (Relay Control = 1C) exactly as requested
+    const lengthHex = '10'; // 16 bytes: 4(Pass) + 4(Opr) + 1(N1) + 1(N2) + 6(Time)
+    const frameBody = `68 ${addrBytes} 68 1C ${lengthHex} ${passFormatted} ${oprFormatted} ${n1Hex} ${n2Hex} ${timeHex}`;
     const cs = calcCS(frameBody);
     const command_hex = `FE FE FE FE\n${frameBody}\n${cs}\n16`;
 
