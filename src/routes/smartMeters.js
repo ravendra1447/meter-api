@@ -117,7 +117,7 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
   try {
     const { cutoff_date } = req.body;
     if (!cutoff_date) return fail(res, 'cutoff_date is required', 422);
-    
+
     // Fix: Do not use new Date().toISOString() as it converts local time to UTC (-5.5 hours)
     // Flutter sends '2026-08-05T19:00:00.000', we just need '2026-08-05 19:00:00'
     const formattedDate = cutoff_date.substring(0, 19).replace('T', ' ');
@@ -125,7 +125,7 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
 
     // 1. Check if the ID belongs to electricity_meters
     const [emRows] = await pool.query('SELECT meter_number FROM electricity_meters WHERE id = ?', [req.params.meterId]);
-    
+
     let actualMeterId = req.params.meterId; // fallback
 
     if (emRows.length > 0) {
@@ -168,32 +168,32 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
     const [configs] = await pool.query('SELECT param_key, param_value FROM meter_config WHERE meter_id = ?', [actualMeterId]);
     const configMap = {};
     for (let row of configs) configMap[row.param_key] = row.param_value;
-    
+
     const passHex = configMap['password'] || '02000000';
     const oprHex = configMap['operator_code'] || '00000000';
 
-    const passFormatted = passHex.match(/.{1,2}/g).map(add33Hex).join(' '); 
-    const oprFormatted = oprHex.match(/.{1,2}/g).map(add33Hex).join(' '); 
+    const passFormatted = passHex.match(/.{1,2}/g).map(add33Hex).join(' ');
+    const oprFormatted = oprHex.match(/.{1,2}/g).map(add33Hex).join(' ');
 
     // Address bytes REVERSED (Little-Endian) as per exact requirement
-    const addrBytes = meterNumStr.padStart(12, '0').match(/.{1,2}/g).reverse().join(' '); 
+    const addrBytes = meterNumStr.padStart(12, '0').match(/.{1,2}/g).reverse().join(' ');
 
     // Fetch DI Code for Schedule (Typically 04001101 for Auto Trip Timing)
     const [diRows] = await pool.query("SELECT di_code FROM di_master WHERE di_name LIKE '%Schedule%' OR di_code = '04001101' LIMIT 1");
     const dynamicDiCode = diRows.length > 0 ? diRows[0].di_code : '04001101';
 
     // Reverse and +33 for DI (DI is sent reversed)
-    const diFormatted = dynamicDiCode.match(/.{1,2}/g).reverse().map(add33Hex).join(' '); 
+    const diFormatted = dynamicDiCode.match(/.{1,2}/g).reverse().map(add33Hex).join(' ');
 
     // Time Formatting for Write Schedule: N1=1A, N2=00, ss mm hh dd MM YY (Reversed)
-    const parts = formattedDate.split(/[- :]/); 
+    const parts = formattedDate.split(/[- :]/);
     const YY = parts[0].slice(-2);
     const MM = parts[1];
     const dd = parts[2];
     const hh = parts[3];
     const mm = parts[4];
     const ss = parts[5];
-    
+
     // N1=1A, N2=00
     const nBytes = ['1A', '00', ss, mm, hh, dd, MM, YY].map(add33Hex).join(' ');
 
@@ -216,7 +216,7 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
         end_byte: 22,
         payload: {
           format: "1C_write",
-          di_code: "1A00",
+          di_code: dynamicDiCode, // Keep it in JSON for logging
           pa: "0x" + passHex.substring(0, 2),
           password_hex: passHex.substring(2),
           operator_hex: oprHex,
@@ -235,8 +235,8 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
     // 5. LOG INTO meter_commands_log
     await pool.query(
       `INSERT INTO meter_commands_log 
-        (meter_id, electricity_meter_id, command_type, di_code, command_name, control_code, source, channel, request_hex, status, datetime_iso, parsed_json, created_at)
-       VALUES (?, ?, 'write', ?, 'Set Internal Schedule', '14', 'ble', 'flutter', ?, 'pending', ?, ?, NOW())`,
+        (meter_id, electricity_meter_id, command_type, di_code, command_name, control_code, source, channel, request_hex, response_hex, status, datetime_iso, parsed_json, created_at)
+       VALUES (?, ?, 'write', ?, 'Set Internal Schedule', '14', 'ble', 'flutter', ?, NULL, 'pending', ?, ?, NOW())`,
       [actualMeterId, req.params.meterId, dynamicDiCode, command_hex, formattedDate.replace(' ', 'T'), parsedJsonStr]
     );
 
@@ -249,7 +249,7 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
         actualMeterId,
         command_hex,
         meterNumStr.padStart(12, '0').match(/.{1,2}/g).join(' '),
-        '14',
+        '1C',
         10,
         passHex,
         oprHex,
@@ -265,15 +265,15 @@ router.post('/:meterId/set-cutoff', async (req, res, next) => {
       enable_schedule_hex = enableRows[0].hex_template;
       // If the template needs meter address
       if (enable_schedule_hex && enable_schedule_hex.includes('{ADDRESS}')) {
-         enable_schedule_hex = enable_schedule_hex.replace(/\{ADDRESS\}/g, addrBytes);
+        enable_schedule_hex = enable_schedule_hex.replace(/\{ADDRESS\}/g, addrBytes);
       }
     }
 
     console.log(`[SET-CUTOFF] Successfully completed. Return to App.`);
-    return ok(res, { 
+    return ok(res, {
       message: 'Cutoff date updated manually and saved to schedule table',
       enable_schedule_hex: enable_schedule_hex,
-      command_hex: command_hex 
+      command_hex: command_hex
     });
   } catch (e) {
     console.error(`[SET-CUTOFF] ❌ ERROR: ${e.message}`);
@@ -371,7 +371,7 @@ router.post('/:meterId/log-packet', async (req, res, next) => {
   try {
     const { request_hex, response_hex, command_type, di_code, status, parsed, direction, frame, parsed_data } = req.body;
     const meterId = req.params.meterId;
-    
+
     // Log to raw_packets
     await pool.query(
       `INSERT INTO raw_packets (meter_id, request_hex, response_hex, parsed, created_at)
@@ -387,7 +387,7 @@ router.post('/:meterId/log-packet', async (req, res, next) => {
         [meterId, command_type, di_code || null, request_hex, response_hex, status || 'COMPLETED']
       );
     }
-    
+
     // Log to dl645_logs
     if (frame || parsed_data) {
       await pool.query(
@@ -408,7 +408,7 @@ router.post('/:meterId/load-profile', async (req, res, next) => {
   try {
     const meterId = req.params.meterId;
     const { di_code, value, record_date } = req.body;
-    
+
     if (!di_code || value === undefined) {
       return fail(res, 'di_code and value are required', 422);
     }
@@ -429,7 +429,7 @@ router.post('/:meterId/schedule', async (req, res, next) => {
   try {
     const meterId = req.params.meterId;
     const { action, di_code, schedule_time, repeat_type, is_active } = req.body;
-    
+
     if (!action || !schedule_time) {
       return fail(res, 'action and schedule_time are required', 422);
     }
@@ -465,7 +465,7 @@ router.post('/:meterId/config', async (req, res, next) => {
   try {
     const meterId = req.params.meterId;
     const { param_key, param_value } = req.body;
-    
+
     if (!param_key) {
       return fail(res, 'param_key is required', 422);
     }

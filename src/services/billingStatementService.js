@@ -298,6 +298,7 @@ async function buildStatement(assignment, conn = pool) {
       unit: property.property_code,
     },
     tenant: {
+      id: tenant.id,
       name: tenant.name,
       email: tenant.email ?? '—',
       phone: tenant.mobile,
