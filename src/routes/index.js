@@ -9,6 +9,8 @@ const bluetoothRouter = require('./bluetooth');
 const usageRouter = require('./usage');
 const mqttRouter = require('./mqtt');
 const meterCommandsRouter = require('./meterCommands');
+const complaintsRouter = require('./complaints');
+const expensesRouter = require('./expenses');
 const router = express.Router();
 
 router.get('/', (req, res) => {
@@ -16,58 +18,7 @@ router.get('/', (req, res) => {
     success: true,
     message: 'Prepaid Meter & Tenant Billing API',
     version: '1.0',
-    runtime: 'node',
-    endpoints: {
-      auth: {
-        'POST /api/auth/owner/register': 'Register property owner',
-        'POST /api/auth/tenant/register': 'Register tenant (requires property_code)',
-        'POST /api/auth/login': 'Login with mobile + password',
-        'GET /api/auth/me': 'Current user (Bearer token)',
-        'POST /api/auth/logout': 'Logout (Bearer token)',
-      },
-      owner: {
-        'GET /api/owner/properties': 'List properties',
-        'POST /api/owner/properties': 'Create property',
-        'GET /api/owner/properties/{id}': 'Property details',
-        'POST /api/owner/properties/{id}/meters': 'Add electricity meter',
-      },
-      master: {
-        'GET /api/master/dashboard': 'Stats overview',
-        'CRUD /api/master/owners': 'Manage all owners',
-        'CRUD /api/master/properties': 'Manage all properties',
-        'CRUD /api/master/tenants': 'Manage all tenants',
-        'CRUD /api/master/meters': 'Manage all meters',
-      },
-      tenant: {
-        'GET /api/tenant/property': 'View linked property',
-        'GET /api/tenant/meters': 'View meters',
-      },
-      web_panel: 'http://127.0.0.1:8000/master/login',
-      bluetooth: {
-        'POST /api/bluetooth/reading': 'Save meter reading from Flutter app',
-        'POST /api/bluetooth/relay': 'Sync relay ON/OFF after BLE command',
-        'GET /api/usage/daily/{meterId}': 'Daily consumption history',
-        'GET /api/smart-meters': 'List smart meters',
-        'GET /api/smart-meters/by-mac/{mac}': 'Find meter by Bluetooth MAC',
-        'POST /api/smart-meters/register': 'Auto-register meter by MAC',
-        'GET /api/smart-meters/{meterId}/dashboard': 'Meter dashboard data',
-        'POST /api/smart-meters': 'Register new smart meter',
-        'POST /api/smart-meters/{meterId}/sync-schedule': 'Clear pending schedule sync after BLE write',
-      },
-      meters: {
-        'GET /api/meters/{meterId}/scan-info': 'First-scan / installation status for Flutter',
-        'POST /api/meters/location': 'Save GPS coordinates for meter install',
-        'POST /api/meters/installation': 'Save installation date',
-        'POST /api/meters/command-log': 'Save to meter_commands_log table',
-        'POST /api/meters/parse-frame': 'Decode DLT645 hex frame for debugging',
-        'GET /api/meters/command-log?meter_id=': 'List meter_commands_log rows',
-        'GET /api/meter-commands-log': 'List meter_commands_log (auth required)',
-      },
-      mqtt: {
-        'POST /api/mqtt/uplink': 'MQTT uplink webhook stub',
-      },
-    },
-    note: 'Use Master Web Panel for full management. Login: 9999999999 / master123',
+    runtime: 'node'
   });
 });
 
@@ -79,6 +30,8 @@ router.use('/smart-meters', smartMetersRouter);
 router.use('/bluetooth', bluetoothRouter);
 router.use('/usage', usageRouter);
 router.use('/mqtt', mqttRouter);
+router.use('/complaints', complaintsRouter);
+router.use('/expenses', expensesRouter);
 router.use('/', meterCommandsRouter);
 
 module.exports = router;

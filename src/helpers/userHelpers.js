@@ -52,9 +52,11 @@ async function generatePropertyCode(conn = pool) {
 
 async function activeTenantAssignment(tenantUserId, conn = pool) {
   const [rows] = await conn.query(
-    `SELECT pt.*, p.*, pt.id AS assignment_id, p.id AS property_id
+    `SELECT pt.*, p.*, pt.id AS assignment_id, p.id AS property_id,
+        u.name AS owner_name, u.mobile AS owner_mobile
      FROM property_tenants pt
      INNER JOIN properties p ON p.id = pt.property_id
+     LEFT JOIN users u ON u.id = p.owner_id
      WHERE pt.tenant_id = ? AND pt.status = 'active'
      ORDER BY pt.id DESC LIMIT 1`,
     [tenantUserId]
@@ -81,6 +83,8 @@ async function activeTenantAssignment(tenantUserId, conn = pool) {
     property: {
       id: row.property_id,
       owner_id: row.owner_id,
+      owner_name: row.owner_name,
+      owner_mobile: row.owner_mobile,
       property_code: row.property_code,
       name: row.name,
       address: row.address,

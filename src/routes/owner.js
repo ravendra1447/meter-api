@@ -165,6 +165,18 @@ router.get('/dashboard', async (req, res) => {
       [ownerId]
     );
 
+    const [expiringLeases] = await pool.query(
+      `SELECT pt.id as assignment_id, pt.tenant_id, pt.property_id, p.name as property_name, u.name as tenant_name, pt.agreement_to
+       FROM property_tenants pt
+       JOIN properties p ON pt.property_id = p.id
+       JOIN users u ON pt.tenant_id = u.id
+       WHERE p.owner_id = ? AND pt.status = 'active' 
+       AND pt.agreement_to IS NOT NULL
+       AND pt.agreement_to BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 30 DAY)
+       ORDER BY pt.agreement_to ASC`,
+      [ownerId]
+    );
+
     return ok(res, {
       stats: {
         properties: mapped.length,
@@ -175,6 +187,7 @@ router.get('/dashboard', async (req, res) => {
       properties: mapped,
       statements: billingData.statements,
       period: billingData.period,
+      expiring_leases: expiringLeases,
     });
   } catch (err) {
     console.error(err);
@@ -252,6 +265,12 @@ router.get('/tenants', async (req, res) => {
         bill_status: stmt?.status ?? 'due',
         bill_status_label: stmt?.status_label ?? 'Payment Due',
         bill_amount: stmt?.total ?? 0,
+        bill_breakdown: {
+          rent: stmt?.rent ?? 0,
+          maintenance: stmt?.maintenance ?? 0,
+          water: stmt?.water_amount ?? 0,
+          electricity: stmt?.electricity_amount ?? 0,
+        }
       };
     });
 
@@ -2859,6 +2878,65 @@ router.delete('/other-active-charges/:otherActiveCharge', async (req, res) => {
   } catch (err) {
     console.error(err);
     return fail(res, 'Failed to delete other active charge.', 500);
+  }
+});
+router.get('/pending-payments', async (req, res) => {
+  try {
+    const ownerId = req.user.id;
+    const [payments] = await pool.query(
+      `SELECT tp.*, u.name AS tenant_name, p.name AS property_name 
+       FROM tenant_payments tp
+       INNER JOIN property_tenants pt ON pt.tenant_id = tp.tenant_id AND pt.status = 'active'
+       INNER JOIN properties p ON p.id = pt.property_id
+       INNER JOIN users u ON u.id = tp.tenant_id
+       WHERE p.owner_id = ? AND tp.status = 'pending'
+       ORDER BY tp.created_at DESC`,
+      [ownerId]
+    );
+    return ok(res, payments);
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to load pending payments.', 500);
+  }
+});
+
+router.post('/approve-payment/:id', async (req, res) => {
+  try {
+    const paymentId = req.params.id;
+    const ownerId = req.user.id;
+    const [rows] = await pool.query(
+      `SELECT tp.* FROM tenant_payments tp
+       INNER JOIN property_tenants pt ON pt.tenant_id = tp.tenant_id AND pt.status = 'active'
+       INNER JOIN properties p ON p.id = pt.property_id
+       WHERE tp.id = ? AND p.owner_id = ? LIMIT 1`,
+      [paymentId, ownerId]
+    );
+    if (!rows.length) return fail(res, 'Payment not found or unauthorized.', 404);
+    await pool.query(`UPDATE tenant_payments SET status = 'approved', updated_at = NOW() WHERE id = ?`, [paymentId]);
+    return ok(res, null, 'Payment approved.');
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to approve payment.', 500);
+  }
+});
+
+router.post('/reject-payment/:id', async (req, res) => {
+  try {
+    const paymentId = req.params.id;
+    const ownerId = req.user.id;
+    const [rows] = await pool.query(
+      `SELECT tp.* FROM tenant_payments tp
+       INNER JOIN property_tenants pt ON pt.tenant_id = tp.tenant_id AND pt.status = 'active'
+       INNER JOIN properties p ON p.id = pt.property_id
+       WHERE tp.id = ? AND p.owner_id = ? LIMIT 1`,
+      [paymentId, ownerId]
+    );
+    if (!rows.length) return fail(res, 'Payment not found or unauthorized.', 404);
+    await pool.query(`UPDATE tenant_payments SET status = 'rejected', updated_at = NOW() WHERE id = ?`, [paymentId]);
+    return ok(res, null, 'Payment rejected.');
+  } catch (err) {
+    console.error(err);
+    return fail(res, 'Failed to reject payment.', 500);
   }
 });
 
